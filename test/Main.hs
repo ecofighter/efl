@@ -77,6 +77,104 @@ parserSpec = do
         parserTest parseLet "let x : Int = 1 in x"
           `shouldBe` Right (Let "x" (Just TyInt) (Int 1) (Var "x"))
 
+      it "parses let with single parameter" $ do
+        parserTest parseLet "let f x = x in f"
+          `shouldBe` Right (Let "f" Nothing (Fun ("x", Nothing) (Var "x")) (Var "f"))
+
+      it "parses let with multiple parameters" $ do
+        parserTest parseLet "let f x y = x in f"
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
+                (Var "f")
+            )
+
+      it "parses let with typed parameters" $ do
+        parserTest parseLet "let f (x : Int) (y : Bool) = x in f"
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                (Fun ("x", Just TyInt) (Fun ("y", Just TyBool) (Var "x")))
+                (Var "f")
+            )
+
+      it "parses let with mixed typed and untyped parameters" $ do
+        parserTest parseLet "let f (x : Int) y = x in f"
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                (Fun ("x", Just TyInt) (Fun ("y", Nothing) (Var "x")))
+                (Var "f")
+            )
+
+      it "parses let with type annotation and parameters" $ do
+        parserTest parseLet "let f x y : Int -> Int -> Int = y in f 1 2"
+          `shouldBe` Right
+            ( Let
+                "f"
+                (Just (TyArr TyInt (TyArr TyInt TyInt)))
+                ( Fun
+                    ("x", Nothing)
+                    ( Fun
+                        ("y", Nothing)
+                        (Var "y")
+                    )
+                )
+                (App (App (Var "f") (Int 1)) (Int 2))
+            )
+
+    describe "Complex expressions with parameterized let" $ do
+      it "evaluates let with parameters" $ do
+        let e = "let f x y = x in f 1 2"
+        parserTest parseExp e
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
+                (App (App (Var "f") (Int 1)) (Int 2))
+            )
+
+      it "handles nested parameterized let expressions" $ do
+        let e = "let f x = let g y = x in g 2 in f 1"
+        parserTest parseExp e
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                ( Fun
+                    ("x", Nothing)
+                    ( Let
+                        "g"
+                        Nothing
+                        (Fun ("y", Nothing) (Var "x"))
+                        (App (Var "g") (Int 2))
+                    )
+                )
+                (App (Var "f") (Int 1))
+            )
+
+      it "handles parameterized let with if expressions" $ do
+        let e = "let f x y = if x then y else 0 in f true 1"
+        parserTest parseExp e
+          `shouldBe` Right
+            ( Let
+                "f"
+                Nothing
+                ( Fun
+                    ("x", Nothing)
+                    ( Fun
+                        ("y", Nothing)
+                        (If (Var "x") (Var "y") (Int 0))
+                    )
+                )
+                (App (App (Var "f") (Bool True)) (Int 1))
+            )
+
     describe "parseIf" $ do
       it "parses if expression" $ do
         parserTest parseIf "if true then 1 else 0"
@@ -137,7 +235,6 @@ cekSpec :: Spec
 cekSpec = do
   describe "CEK Machine" $ do
     let emptyEnv = [] -- 空のグローバル環境
-
     describe "Basic evaluation" $ do
       it "evaluates integers" $ do
         eval emptyEnv (Int 42) `shouldBe` Just (VInt 42)
@@ -279,7 +376,7 @@ cekSpec = do
         case eval emptyEnv e of
           Just (VClos {}) -> pure ()
           _ -> expectationFailure "Should evaluate to closure"
-          
+
 main :: IO ()
 main = hspec $ do
   parserSpec

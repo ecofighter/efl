@@ -59,17 +59,24 @@ parseApp :: Parser Exp
 parseApp = liftA2 (foldl App) parseAtomicExp (some parseAtomicExp) <?> "Application"
 
 parseLet :: Parser Exp
-parseLet =
-  Let
-    <$ symbol "let"
-    <*> parseIdent
-    <*> tyAnnot
-    <* symbolic '='
-    <*> parseExp
-    <* symbol "in"
-    <*> parseExp <?> "Let Expression"
+parseLet = do
+  _ <- symbol "let"
+  name <- parseIdent
+  params <- many param
+  ty <- optional tyAnnot
+  _ <- symbolic '='
+  body <- parseExp
+  _ <- symbol "in"
+  expr <- parseExp
+  pure (Let name ty (foldr Fun body params) expr) <?> "Let Expression"
   where
-    tyAnnot = optional (symbolic ':' *> parseTy)
+    param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
+    annotated = parens $ do
+      idnt <- parseIdent
+      _ <- symbolic ':'
+      ty <- parseTy
+      pure (idnt, Just ty)
+    tyAnnot = symbolic ':' *> parseTy
 
 parseIf :: Parser Exp
 parseIf =
