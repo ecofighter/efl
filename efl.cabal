@@ -18,8 +18,9 @@ common warnings
 
 library
     import:           warnings
-    exposed-modules:  Parser,
-                      Syntax,
+    exposed-modules:  Syntax,
+                      Parser,
+                      TypeChecker,
                       CEKMachine
     -- other-modules:
     -- other-extensions:
@@ -38,6 +39,10 @@ executable efl
     -- other-extensions:
     build-depends:
         base ^>=4.17.2.1,
+        bytestring,
+        containers,
+        haskeline,
+        trifecta,
         efl
 
     hs-source-dirs:   app
@@ -46,7 +51,8 @@ executable efl
 test-suite efl-test
     import:           warnings
     default-language: GHC2021
-    -- other-modules:
+    other-modules:    ParserSpec,
+                      TypeCheckerSpec
     -- other-extensions:
     type:             exitcode-stdio-1.0
     hs-source-dirs:   test

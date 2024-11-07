@@ -25,3 +25,7 @@ data Exp
   | Let ByteString (Maybe Ty) Exp Exp
   | If Exp Exp Exp
   deriving (Eq, Show)
+
+data Stmt
+  = LetStmt ByteString (Maybe Ty) Exp
+  | ExpStmt Exp

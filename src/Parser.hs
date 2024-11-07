@@ -25,6 +25,30 @@ reserved s = Set.member s set
           "false"
         ]
 
+parseStmt :: Parser Stmt
+parseStmt = choice [parseLetStmt, parseExpStmt] <?> "Statement"
+
+parseExpStmt :: Parser Stmt
+parseExpStmt = ExpStmt <$> parseExp <?> "Expression Statement"
+
+parseLetStmt :: Parser Stmt
+parseLetStmt = do
+  _ <- symbol "let"
+  name <- parseIdent
+  params <- many param
+  ty <- optional tyAnnot
+  _ <- symbolic '='
+  body <- parseExp
+  pure (LetStmt name ty (foldr Fun body params)) <?> "Let Statement"
+  where
+    param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
+    annotated = parens $ do
+      idnt <- parseIdent
+      _ <- symbolic ':'
+      ty <- parseTy
+      pure (idnt, Just ty)
+    tyAnnot = symbolic ':' *> parseTy
+
 parseExp :: Parser Exp
 parseExp = choice [parseLet, parseFun, parseIf, try parseApp, parseAtomicExp] <?> "Expression"
 
