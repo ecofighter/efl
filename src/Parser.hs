@@ -22,7 +22,11 @@ reserved s = Set.member s set
           "then",
           "else",
           "true",
-          "false"
+          "false",
+          "match",
+          "with",
+          "fst",
+          "snd"
         ]
 
 parseStmt :: Parser Stmt
@@ -50,10 +54,23 @@ parseLetStmt = do
     tyAnnot = symbolic ':' *> parseTy
 
 parseExp :: Parser Exp
-parseExp = choice [parseLet, parseFun, parseIf, try parseApp, parseAtomicExp] <?> "Expression"
+parseExp =
+  choice
+    [ parseLet,
+      parseFun,
+      parseIf,
+      parseMatch,
+      try parseApp,
+      try parseFst,
+      try parseSnd,
+      parseAtomicExp
+    ]
+    <?> "Expression"
 
 parseAtomicExp :: Parser Exp
-parseAtomicExp = choice [parseVar, parseInt, parseBool, parens parseExp] <?> "Atomic Expression"
+parseAtomicExp =
+  choice [parseVar, parseInt, parseBool, try parsePair, parens parseExp]
+    <?> "Atomic Expression"
 
 parseVar :: Parser Exp
 parseVar = Var <$> parseIdent <?> "Variable"
@@ -66,7 +83,7 @@ parseBool = Bool <$> choice [symbol "true" $> True, symbol "false" $> False] <?>
 
 parseFun :: Parser Exp
 parseFun = do
-  _ <-symbol "fun"
+  _ <- symbol "fun"
   params <- some param
   _ <- symbol "->"
   body <- parseExp
@@ -112,6 +129,21 @@ parseIf =
     <* symbol "else"
     <*> parseExp <?> "If Expression"
 
+parseMatch :: Parser Exp
+parseMatch = do
+  _ <- symbol "match"
+  scrutinee <- parseExp
+  _ <- symbol "with"
+  cases <- some parseCase
+  return $ Match scrutinee cases
+  where
+    parseCase = do
+      _ <- symbol "|"
+      pattern <- parsePattern
+      _ <- symbol "->"
+      e <- parseExp
+      return (pattern, e)
+
 parseIdent :: Parser ByteString
 parseIdent = try (token aux) <?> "Identifier"
   where
@@ -123,11 +155,31 @@ parseIdent = try (token aux) <?> "Identifier"
         else
           pure res
 
+parsePair :: Parser Exp
+parsePair = parens (Pair <$> parseExp <* symbolic ',' <*> parseExp) <?> "Pair Exp"
+
+parseFst :: Parser Exp
+parseFst = Fst <$> (symbol "fst" *> parseAtomicExp)
+
+parseSnd :: Parser Exp
+parseSnd = Snd <$> (symbol "snd" *> parseAtomicExp)
+
+parsePattern :: Parser Pattern
+parsePattern = choice [parsePPair, parsePVar] <?> "Pattern"
+
+parsePPair :: Parser Pattern
+parsePPair = parens (PPair <$> parsePattern <* symbolic ',' <*> parsePattern) <?> "Pattern Pair"
+
+parsePVar :: Parser Pattern
+parsePVar = PVar <$> parseIdent
+
 parseTy :: Parser Ty
 parseTy = choice [parseTyArrow, parseAtomicTy] <?> "Type"
 
 parseAtomicTy :: Parser Ty
-parseAtomicTy = choice [parseTyInt, parseTyBool, parens parseTy] <?> "Atomic Type"
+parseAtomicTy =
+  choice [parseTyInt, parseTyBool, try parseTyProd, parens parseTy]
+    <?> "Atomic Type"
 
 parseTyInt :: Parser Ty
 parseTyInt = symbol "Int" $> TyInt <?> "Type Int"
@@ -139,3 +191,6 @@ parseTyArrow :: Parser Ty
 parseTyArrow = parseAtomicTy `chainr1` arr <?> "Type Arrow"
   where
     arr = TyArr <$ symbol "->"
+
+parseTyProd :: Parser Ty
+parseTyProd = parens (TyProd <$> parseTy <* symbolic ',' <*> parseTy) <?> "Product Type"

@@ -11,6 +11,7 @@ module TypeChecker
   )
 where
 
+import Control.Monad
 import Data.ByteString.Char8 (ByteString)
 import Data.Map (Map)
 import Data.Map qualified as Map
@@ -91,6 +92,10 @@ instance Substitutable TypeEnv where
   apply s = Map.map (apply s)
   ftv = freeTypeVarsEnv
 
+instance Substitutable Pattern where
+  apply _ = id -- パターンには型変数は含まれない
+  ftv _ = Set.empty
+
 -- 型の単一化
 unify :: (State TyState :> es, Error TypeError :> es) => Ty -> Ty -> Eff es Substitution
 unify t1 t2 = do
@@ -149,6 +154,27 @@ typecheck' env expr maybeAnnot = runPureEff . runErrorNoCallStack $ do
 typecheck :: Exp -> Either TypeError (Ty, Substitution)
 typecheck expr = typecheck' Map.empty expr Nothing
 
+checkPattern ::
+  (State TyState :> es, Error TypeError :> es) =>
+  Pattern ->
+  Ty ->
+  Eff es TypeEnv
+checkPattern pat ty = case pat of
+  PVar x ->
+    return $ Map.singleton x (Forall [] ty)
+  PPair p1 p2 -> case ty of
+    TyProd ty1 ty2 -> do
+      env1 <- checkPattern p1 ty1
+      env2 <- checkPattern p2 ty2
+      return $ Map.union env1 env2
+    _ -> do
+      ty1 <- newTyVar
+      ty2 <- newTyVar
+      void $ unify ty (TyProd ty1 ty2)
+      env1 <- checkPattern p1 ty1
+      env2 <- checkPattern p2 ty2
+      return $ Map.union env1 env2
+
 -- 型推論関数
 infer :: (State TyState :> es, Error TypeError :> es) => TypeEnv -> Exp -> Eff es Ty
 infer env expr = case expr of
@@ -185,3 +211,27 @@ infer env expr = case expr of
     elseTy <- infer (apply s1 env) else_
     s2 <- unify thenTy elseTy
     return $ apply s2 thenTy
+  Pair e1 e2 -> do
+    ty1 <- infer env e1
+    ty2 <- infer env e2
+    return $ TyProd ty1 ty2
+  Fst e -> do
+    ty <- infer env e
+    ty1 <- newTyVar
+    ty2 <- newTyVar
+    _ <- unify ty (TyProd ty1 ty2)
+    return ty1
+  Snd e -> do
+    ty <- infer env e
+    ty1 <- newTyVar
+    ty2 <- newTyVar
+    _ <- unify ty (TyProd ty1 ty2)
+    return ty2
+  Match e cases -> do
+    scrutTy <- infer env e
+    resultTy <- newTyVar
+    forM_ cases $ \(pat, expr') -> do
+      patEnv <- checkPattern pat scrutTy
+      exprTy <- infer (patEnv `Map.union` env) expr'
+      unify resultTy exprTy
+    return resultTy

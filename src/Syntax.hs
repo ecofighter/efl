@@ -7,13 +7,13 @@ data Ty
   = TyInt
   | TyBool
   | TyArr Ty Ty
+  | TyProd Ty Ty
   | TyVar Int
   deriving (Eq, Show)
 
-data Stage = Time Int | Infinite
-  deriving (Eq, Show)
-
-data StagedTy = StagedTy Stage Ty
+data Pattern
+  = PVar ByteString
+  | PPair Pattern Pattern
   deriving (Eq, Show)
 
 data Exp
@@ -24,6 +24,10 @@ data Exp
   | App Exp Exp
   | Let ByteString (Maybe Ty) Exp Exp
   | If Exp Exp Exp
+  | Pair Exp Exp
+  | Fst Exp
+  | Snd Exp
+  | Match Exp [(Pattern, Exp)]
   deriving (Eq, Show)
 
 data Stmt
