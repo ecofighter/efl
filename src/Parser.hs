@@ -59,7 +59,6 @@ parseExp =
     [ parseLet,
       parseFun,
       parseIf,
-      parseMatch,
       try parseApp,
       try parseFst,
       try parseSnd,
@@ -128,21 +127,6 @@ parseIf =
     <*> parseExp
     <* symbol "else"
     <*> parseExp <?> "If Expression"
-
-parseMatch :: Parser Exp
-parseMatch = do
-  _ <- symbol "match"
-  scrutinee <- parseExp
-  _ <- symbol "with"
-  cases <- some parseCase
-  return $ Match scrutinee cases
-  where
-    parseCase = do
-      _ <- symbol "|"
-      pattern <- parsePattern
-      _ <- symbol "->"
-      e <- parseExp
-      return (pattern, e)
 
 parseIdent :: Parser ByteString
 parseIdent = try (token aux) <?> "Identifier"

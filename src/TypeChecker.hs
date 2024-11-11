@@ -11,7 +11,6 @@ module TypeChecker
   )
 where
 
-import Control.Monad
 import Data.ByteString.Char8 (ByteString)
 import Data.Map (Map)
 import Data.Map qualified as Map
@@ -154,27 +153,6 @@ typecheck' env expr maybeAnnot = runPureEff . runErrorNoCallStack $ do
 typecheck :: Exp -> Either TypeError (Ty, Substitution)
 typecheck expr = typecheck' Map.empty expr Nothing
 
-checkPattern ::
-  (State TyState :> es, Error TypeError :> es) =>
-  Pattern ->
-  Ty ->
-  Eff es TypeEnv
-checkPattern pat ty = case pat of
-  PVar x ->
-    return $ Map.singleton x (Forall [] ty)
-  PPair p1 p2 -> case ty of
-    TyProd ty1 ty2 -> do
-      env1 <- checkPattern p1 ty1
-      env2 <- checkPattern p2 ty2
-      return $ Map.union env1 env2
-    _ -> do
-      ty1 <- newTyVar
-      ty2 <- newTyVar
-      void $ unify ty (TyProd ty1 ty2)
-      env1 <- checkPattern p1 ty1
-      env2 <- checkPattern p2 ty2
-      return $ Map.union env1 env2
-
 -- 型推論関数
 infer :: (State TyState :> es, Error TypeError :> es) => TypeEnv -> Exp -> Eff es Ty
 infer env expr = case expr of
@@ -227,11 +205,3 @@ infer env expr = case expr of
     ty2 <- newTyVar
     _ <- unify ty (TyProd ty1 ty2)
     return ty2
-  Match e cases -> do
-    scrutTy <- infer env e
-    resultTy <- newTyVar
-    forM_ cases $ \(pat, expr') -> do
-      patEnv <- checkPattern pat scrutTy
-      exprTy <- infer (patEnv `Map.union` env) expr'
-      unify resultTy exprTy
-    return resultTy

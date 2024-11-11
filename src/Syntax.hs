@@ -27,7 +27,6 @@ data Exp
   | Pair Exp Exp
   | Fst Exp
   | Snd Exp
-  | Match Exp [(Pattern, Exp)]
   deriving (Eq, Show)
 
 data Stmt
