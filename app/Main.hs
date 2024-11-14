@@ -3,123 +3,81 @@
 
 module Main where
 
+import CAMachine
+import Control.Monad.IO.Class
 import Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as BS
-import System.Console.Haskeline
-import Text.Trifecta hiding (err)
-import qualified Data.Map as Map
-
-import CEKMachine
+import Data.ByteString.Char8 qualified as BS
+import Data.Map qualified as Map
 import Parser
-import TypeChecker
 import Syntax
+import System.Console.Haskeline
+import Text.Trifecta (Result (..), parseByteString)
+import TypeChecker
 
--- REPLの状態
-data ReplState = ReplState
-  { replTypeEnv :: Map.Map ByteString TyScheme  -- 型環境
-  , replValueEnv :: GlobalEnv                    -- 値環境
+type TypeEnv = Map.Map ByteString TyScheme
+
+data REPLState = REPLState
+  { typeEnv :: TypeEnv,
+    globalEnv :: GlobalEnv
   }
 
--- 初期状態
-initialReplState :: ReplState
-initialReplState = ReplState
-  { replTypeEnv = Map.empty
-  , replValueEnv = []
-  }
+initialREPLState :: REPLState
+initialREPLState =
+  REPLState
+    { typeEnv = primitivesTypes,
+      globalEnv = primitives
+    }
 
--- REPL monad
-type Repl a = InputT IO a
-
--- メイン関数
 main :: IO ()
-main = runInputT defaultSettings $ do
-  outputStrLn "Welcome to MinML REPL!"
-  outputStrLn "Type :h for help"
-  repl initialReplState
-
--- REPLのメインループ
-repl :: ReplState -> Repl ()
-repl state = do
-  minput <- getInputLine "minml> "
-  case minput of
-    Nothing -> return ()
-    Just input
-      | input == ":q" -> return ()
-      | input == ":h" -> do
-          showHelp
-          repl state
-      | otherwise -> do
-          case parseCommand input of
-            Left err -> do
+main = runInputT defaultSettings $ loop initialREPLState
+  where
+    loop :: REPLState -> InputT IO ()
+    loop state = do
+      minput <- getInputLine "λ> "
+      case minput of
+        Nothing -> return ()
+        Just ":q" -> return ()
+        Just input -> do
+          case parseInput (BS.pack input) of
+            Success stmt -> do
+              result <- liftIO $ evalStmt state stmt
+              case result of
+                Left err -> outputStrLn $ "Error: " ++ show err
+                Right newState -> do
+                  loop newState
+            Failure err -> do
               outputStrLn $ "Parse error: " ++ show err
-              repl state
-            Right stmt -> do
-              newState <- processStmt state stmt
-              repl newState
+              loop state
 
--- コマンドのパース
-parseCommand :: String -> Either String Stmt
-parseCommand input = case parseString parseStmt mempty input of
-  Success stmt -> Right stmt
-  Failure err -> Left (show err)
+parseInput :: ByteString -> Result Stmt
+parseInput = parseByteString parseStmt mempty
 
--- ヘルプの表示
-showHelp :: Repl ()
-showHelp = do
-  outputStrLn "Available commands:"
-  outputStrLn "  :h  - show this help"
-  outputStrLn "  :q  - quit"
-  outputStrLn "Examples:"
-  outputStrLn "  let x : Int = 42"
-  outputStrLn "  let add : Int -> Int -> Int = fun x y -> x + y"
-  outputStrLn "  1 + 2"
-
--- 文の処理
-processStmt :: ReplState -> Stmt -> Repl ReplState
-processStmt state@ReplState{..} stmt = case stmt of
-  LetStmt name tyAnn expr -> do
-    -- 型検査 (型注釈がある場合はそれを使用)
-    case typecheck' (replTypeEnv <> primitivesTypes) expr tyAnn of
-      Left err -> do
-        outputStrLn $ "Type error: " ++ show err
-        return state
-      Right (ty, _) -> do
-        -- 評価
-        case eval (replValueEnv <> primitives) expr of
-          Nothing -> do
-            outputStrLn "Evaluation error"
-            return state
-          Just val -> do
-            -- 型を表示
-            outputStrLn $ BS.unpack name ++ " : " ++ show ty
-            -- 値を表示
-            outputStrLn $ BS.unpack name ++ " = " ++ show val
-            -- 環境を更新
-            let scheme = case tyAnn of
-                  Just annotTy -> Forall [] annotTy  -- 型注釈がある場合はそれを使用
-                  Nothing -> generalize replTypeEnv ty  -- ない場合は推論した型を一般化
-            let newTypeEnv = Map.insert name scheme replTypeEnv
-            let newValueEnv = (name, val) : replValueEnv
-            return $ state { replTypeEnv = newTypeEnv, replValueEnv = newValueEnv }
-
+evalStmt :: REPLState -> Stmt -> IO (Either String REPLState)
+evalStmt state@REPLState {..} stmt = case stmt of
   ExpStmt expr -> do
-    -- 型検査
-    case typecheck' (replTypeEnv <> primitivesTypes) expr Nothing of
-      Left err -> do
-        outputStrLn $ "Type error: " ++ show err
-        return state
+    case typecheck' typeEnv expr Nothing of
+      Left err -> return $ Left $ "Type error: " ++ show err
       Right (ty, _) -> do
-        -- 評価
-        case eval (replValueEnv <> primitives) expr of
-          Nothing -> do
-            outputStrLn "Evaluation error"
-            return state
-          Just val -> do
-            -- 型と値を表示
-            outputStrLn $ "- : " ++ show ty
-            outputStrLn $ "= " ++ show val
-            return state
-
--- エラー表示用のヘルパー関数
-showError :: Show e => e -> String
-showError = show
+        case eval globalEnv expr of
+          Left err -> return $ Left $ "Runtime error: " ++ show err
+          Right val -> do
+            putStrLn $ "Type: " ++ show ty
+            putStrLn $ "Value: " ++ show val
+            return $ Right state
+  LetStmt name maybeType expr -> do
+    case typecheck' typeEnv expr maybeType of
+      Left err -> return $ Left $ "Type error: " ++ show err
+      Right (ty, _) -> do
+        case eval globalEnv expr of
+          Left err -> return $ Left $ "Runtime error: " ++ show err
+          Right val -> do
+            putStrLn $ "Type: " ++ show ty
+            putStrLn $ "Value: " ++ show val
+            let newTypeEnv = Map.insert name (generalize typeEnv ty) typeEnv
+            let newGlobalEnv = (name, val) : globalEnv
+            return $
+              Right $
+                state
+                  { typeEnv = newTypeEnv,
+                    globalEnv = newGlobalEnv
+                  }
