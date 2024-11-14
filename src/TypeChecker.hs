@@ -4,6 +4,7 @@
 module TypeChecker
   ( typecheck,
     typecheck',
+    primitivesTypes,
     generalize,
     TypeError (..),
     Substitution,
@@ -151,7 +152,7 @@ typecheck' env expr maybeAnnot = runPureEff . runErrorNoCallStack $ do
     initialState = TyState {tyCounter = 0, tySubst = Map.empty}
 
 typecheck :: Exp -> Either TypeError (Ty, Substitution)
-typecheck expr = typecheck' Map.empty expr Nothing
+typecheck expr = typecheck' primitivesTypes expr Nothing
 
 -- 型推論関数
 infer :: (State TyState :> es, Error TypeError :> es) => TypeEnv -> Exp -> Eff es Ty
@@ -205,3 +206,18 @@ infer env expr = case expr of
     ty2 <- newTyVar
     _ <- unify ty (TyProd ty1 ty2)
     return ty2
+
+primitivesTypes :: TypeEnv
+primitivesTypes = Map.fromList
+  [ ("add", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
+  , ("sub", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
+  , ("mul", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
+  , ("div", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
+  , ("neg", Forall [] (TyArr TyInt TyInt))
+  , ("eq", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  , ("lt", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  , ("gt", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  , ("le", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  , ("ge", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  , ("ne", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
+  ]

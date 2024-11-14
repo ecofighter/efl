@@ -21,6 +21,7 @@ library
     exposed-modules:  Syntax,
                       Parser,
                       TypeChecker,
+                      CAMachine,
                       CEKMachine
     -- other-modules:
     -- other-extensions:
@@ -52,6 +53,7 @@ test-suite efl-test
     import:           warnings
     default-language: GHC2021
     other-modules:    ParserSpec,
+                      CAMachineSpec,
                       TypeCheckerSpec
     -- other-extensions:
     type:             exitcode-stdio-1.0

@@ -79,13 +79,13 @@ processStmt :: ReplState -> Stmt -> Repl ReplState
 processStmt state@ReplState{..} stmt = case stmt of
   LetStmt name tyAnn expr -> do
     -- 型検査 (型注釈がある場合はそれを使用)
-    case typecheck' replTypeEnv expr tyAnn of
+    case typecheck' (replTypeEnv <> primitivesTypes) expr tyAnn of
       Left err -> do
         outputStrLn $ "Type error: " ++ show err
         return state
       Right (ty, _) -> do
         -- 評価
-        case eval replValueEnv expr of
+        case eval (replValueEnv <> primitives) expr of
           Nothing -> do
             outputStrLn "Evaluation error"
             return state
@@ -104,13 +104,13 @@ processStmt state@ReplState{..} stmt = case stmt of
 
   ExpStmt expr -> do
     -- 型検査
-    case typecheck' replTypeEnv expr Nothing of
+    case typecheck' (replTypeEnv <> primitivesTypes) expr Nothing of
       Left err -> do
         outputStrLn $ "Type error: " ++ show err
         return state
       Right (ty, _) -> do
         -- 評価
-        case eval replValueEnv expr of
+        case eval (replValueEnv <> primitives) expr of
           Nothing -> do
             outputStrLn "Evaluation error"
             return state

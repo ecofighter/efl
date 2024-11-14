@@ -8,6 +8,7 @@ import Test.Hspec
 
 import TypeCheckerSpec (typeCheckerSpec)
 import ParserSpec (parserSpec)
+import CAMachineSpec (caMachineSpec)
 
 
 cekSpec :: Spec
@@ -160,4 +161,5 @@ main :: IO ()
 main = hspec $ do
   parserSpec
   cekSpec
+  caMachineSpec
   typeCheckerSpec

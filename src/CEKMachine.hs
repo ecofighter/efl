@@ -1,29 +1,50 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StrictData #-}
 
-module CEKMachine (eval, Value(..), GlobalEnv) where
+module CEKMachine (eval, evalWithPrimitives, primitives, Value (..), GlobalEnv) where
 
 import Data.ByteString.Char8 (ByteString)
 import Syntax
 
 type LocalEnv = [(ByteString, Value)]
+
 type GlobalEnv = [(ByteString, Value)]
+
+data PrimInfo = PrimInfo
+  { arity :: Int, -- 関数の引数の数
+    impl :: [Value] -> Maybe Value -- 実装
+  }
 
 data Value
   = VInt Int
   | VBool Bool
   | VClos Exp LocalEnv
   | VPair Value Value
-  deriving (Eq, Show)
+  | VPrim PrimInfo
+
+instance Show Value where
+  show (VInt n) = show n
+  show (VBool b) = show b
+  show (VClos _ _) = "<closure>"
+  show (VPair v1 v2) = "(" ++ show v1 ++ ", " ++ show v2 ++ ")"
+  show (VPrim _) = "<primitive>"
+
+instance Eq Value where
+  VInt n1 == VInt n2 = n1 == n2
+  VBool b1 == VBool b2 = b1 == b2
+  VPair v1 v2 == VPair v3 v4 = v1 == v3 && v2 == v4
+  _ == _ = False
 
 data Cont
   = FunK Exp LocalEnv Cont
   | ArgK Value LocalEnv Cont
   | LetK ByteString Exp LocalEnv Cont
   | IfK Exp Exp LocalEnv Cont
-  | PairK1 Exp LocalEnv Cont  -- 追加: ペアの第1要素評価用
-  | PairK2 Value Cont         -- 追加: ペアの第2要素評価用
-  | FstK Cont                 -- 追加: 第1要素取得用
-  | SndK Cont                 -- 追加: 第2要素取得用
+  | PairK1 Exp LocalEnv Cont -- 追加: ペアの第1要素評価用
+  | PairK2 Value Cont -- 追加: ペアの第2要素評価用
+  | FstK Cont -- 追加: 第1要素取得用
+  | SndK Cont -- 追加: 第2要素取得用
   | HaltK
   deriving (Eq, Show)
 
@@ -31,6 +52,48 @@ data State
   = Run Exp LocalEnv GlobalEnv Cont
   | Done Value
   deriving (Eq, Show)
+
+primitives :: GlobalEnv
+primitives =
+  [ ("add", VPrim $ PrimInfo 2 addPrim),
+    ("sub", VPrim $ PrimInfo 2 subPrim),
+    ("mul", VPrim $ PrimInfo 2 mulPrim),
+    ("div", VPrim $ PrimInfo 2 divPrim),
+    ("neg", VPrim $ PrimInfo 1 negPrim),
+    ("eq", VPrim $ PrimInfo 2 eqPrim),
+    ("lt", VPrim $ PrimInfo 2 ltPrim),
+    ("gt", VPrim $ PrimInfo 2 gtPrim),
+    ("le", VPrim $ PrimInfo 2 lePrim),
+    ("ge", VPrim $ PrimInfo 2 gePrim),
+    ("ne", VPrim $ PrimInfo 2 nePrim)
+  ]
+  where
+    addPrim [VInt x, VInt y] = Just $ VInt (x + y)
+    addPrim _ = Nothing
+    subPrim [VInt x, VInt y] = Just $ VInt (x - y)
+    subPrim _ = Nothing
+    mulPrim [VInt x, VInt y] = Just $ VInt (x * y)
+    mulPrim _ = Nothing
+    divPrim [VInt x, VInt y]
+      | y /= 0 = Just $ VInt (x `div` y)
+      | otherwise = Nothing
+    divPrim _ = Nothing
+    negPrim [VInt x] = Just $ VInt (-x)
+    negPrim _ = Nothing
+    eqPrim [VInt x, VInt y] = Just $ VBool (x == y)
+    eqPrim [VBool x, VBool y] = Just $ VBool (x == y)
+    eqPrim _ = Nothing
+    ltPrim [VInt x, VInt y] = Just $ VBool (x < y)
+    ltPrim _ = Nothing
+    gtPrim [VInt x, VInt y] = Just $ VBool (x > y)
+    gtPrim _ = Nothing
+    lePrim [VInt x, VInt y] = Just $ VBool (x <= y)
+    lePrim _ = Nothing
+    gePrim [VInt x, VInt y] = Just $ VBool (x >= y)
+    gePrim _ = Nothing
+    nePrim [VInt x, VInt y] = Just $ VBool (x /= y)
+    nePrim [VBool x, VBool y] = Just $ VBool (x /= y)
+    nePrim _ = Nothing
 
 -- 変数を探す際は、まずローカル環境を確認し、見つからなければグローバル環境を確認する
 lookupVar :: ByteString -> LocalEnv -> GlobalEnv -> Maybe Value
@@ -54,6 +117,7 @@ step (Run c e g k) = case c of
   Pair e1 e2 -> Just $ Run e1 e g (PairK1 e2 e k)
   Fst c' -> Just $ Run c' e g (FstK k)
   Snd c' -> Just $ Run c' e g (SndK k)
+
 applyK :: Value -> Cont -> GlobalEnv -> Maybe State
 applyK val k g = case k of
   HaltK -> Just $ Done val
@@ -61,6 +125,12 @@ applyK val k g = case k of
   ArgK fun _ k' -> case fun of
     VClos (Fun (x, _) body) funE ->
       Just $ Run body ((x, val) : funE) g k'
+    VPrim (PrimInfo {..}) ->
+      if arity > 1
+        then applyK (VPrim $ PrimInfo (arity - 1) (\args -> impl (val : args))) k' g
+        else case impl [val] of -- 単項関数の場合は直接評価
+          Just result -> applyK result k' g
+          Nothing -> Nothing
     _ -> Nothing
   LetK x body e k' ->
     Just $ Run body ((x, val) : e) g k'
@@ -86,3 +156,6 @@ eval g c = go (Run c [] g HaltK)
         Done val -> Just val
         _ -> Nothing
       Just state' -> go state'
+
+evalWithPrimitives :: Exp -> Maybe Value
+evalWithPrimitives = eval primitives
