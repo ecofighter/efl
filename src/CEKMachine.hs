@@ -112,7 +112,8 @@ step (Run c e g k) = case c of
   Bool b -> applyK (VBool b) k g
   Fun (_, _) _ -> applyK (VClos c e) k g
   App e1 e2 -> Just $ Run e1 e g (FunK e2 e k)
-  Let x _ e1 e2 -> Just $ Run e1 e g (LetK x e2 e k)
+  Let (Just x) _ e1 e2 -> Just $ Run e1 e g (LetK x e2 e k)
+  Let Nothing _ e1 e2 -> Just $ Run e1 e g (LetK "$DUMMY" e2 e k)
   If e1 e2 e3 -> Just $ Run e1 e g (IfK e2 e3 e k)
   Pair e1 e2 -> Just $ Run e1 e g (PairK1 e2 e k)
   Fst c' -> Just $ Run c' e g (FstK k)

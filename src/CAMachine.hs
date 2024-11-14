@@ -188,11 +188,14 @@ compileWithEnv env = \case
     [Closure (compileWithEnv (x : env) body ++ [Return])]
   App e1 e2 ->
     compileWithEnv env e1 ++ compileWithEnv env e2 ++ [Apply]
-  Syntax.Let x _ e1 e2 ->
+  Syntax.Let (Just x) _ e1 e2 ->
     compileWithEnv env e1
       ++ [CAMachine.Let]
       ++ compileWithEnv (x : env) e2
       ++ [EndLet]
+  Syntax.Let Nothing _ e1 e2 ->
+    compileWithEnv env e1
+    ++ compileWithEnv env e2
   If e1 e2 e3 ->
     compileWithEnv env e1 ++ [Test (compileWithEnv env e2) (compileWithEnv env e3)]
   Pair e1 e2 ->

@@ -69,21 +69,21 @@ parserSpec = do
     describe "parseLet" $ do
       it "parses simple let binding" $ do
         parserTest parseLet "let x = 1 in x"
-          `shouldBe` Right (Let "x" Nothing (Int 1) (Var "x"))
+          `shouldBe` Right (Let (Just "x") Nothing (Int 1) (Var "x"))
 
       it "parses let with type annotation" $ do
         parserTest parseLet "let x : Int = 1 in x"
-          `shouldBe` Right (Let "x" (Just TyInt) (Int 1) (Var "x"))
+          `shouldBe` Right (Let (Just "x") (Just TyInt) (Int 1) (Var "x"))
 
       it "parses let with single parameter" $ do
         parserTest parseLet "let f x = x in f"
-          `shouldBe` Right (Let "f" Nothing (Fun ("x", Nothing) (Var "x")) (Var "f"))
+          `shouldBe` Right (Let (Just "f") Nothing (Fun ("x", Nothing) (Var "x")) (Var "f"))
 
       it "parses let with multiple parameters" $ do
         parserTest parseLet "let f x y = x in f"
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
                 (Var "f")
@@ -93,7 +93,7 @@ parserSpec = do
         parserTest parseLet "let f (x : Int) (y : Bool) = x in f"
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Just TyInt) (Fun ("y", Just TyBool) (Var "x")))
                 (Var "f")
@@ -103,7 +103,7 @@ parserSpec = do
         parserTest parseLet "let f (x : Int) y = x in f"
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Just TyInt) (Fun ("y", Nothing) (Var "x")))
                 (Var "f")
@@ -113,7 +113,7 @@ parserSpec = do
         parserTest parseLet "let f x y : Int -> Int -> Int = y in f 1 2"
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 (Just (TyArr TyInt (TyArr TyInt TyInt)))
                 ( Fun
                     ("x", Nothing)
@@ -131,7 +131,7 @@ parserSpec = do
         parserTest parseExp e
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
                 (App (App (Var "f") (Int 1)) (Int 2))
@@ -142,12 +142,12 @@ parserSpec = do
         parserTest parseExp e
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 ( Fun
                     ("x", Nothing)
                     ( Let
-                        "g"
+                        (Just "g")
                         Nothing
                         (Fun ("y", Nothing) (Var "x"))
                         (App (Var "g") (Int 2))
@@ -161,7 +161,7 @@ parserSpec = do
         parserTest parseExp e
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 ( Fun
                     ("x", Nothing)
@@ -194,10 +194,10 @@ parserSpec = do
         parserTest parseExp "let x = 1 in let y = 2 in x"
           `shouldBe` Right
             ( Let
-                "x"
+                (Just "x")
                 Nothing
                 (Int 1)
-                (Let "y" Nothing (Int 2) (Var "x"))
+                (Let (Just "y") Nothing (Int 2) (Var "x"))
             )
 
       it "parses function application with if" $ do
@@ -223,7 +223,7 @@ parserSpec = do
         parserTest parseExp "let f = fun x y -> x in f 1 true"
           `shouldBe` Right
             ( Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
                 (App (App (Var "f") (Int 1)) (Bool True))

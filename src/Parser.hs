@@ -30,15 +30,12 @@ reserved s = Set.member s set
         ]
 
 parseStmt :: Parser Stmt
-parseStmt = choice [parseLetStmt, parseExpStmt] <?> "Statement"
-
-parseExpStmt :: Parser Stmt
-parseExpStmt = ExpStmt <$> parseExp <?> "Expression Statement"
+parseStmt = parseLetStmt <?> "Statement"
 
 parseLetStmt :: Parser Stmt
 parseLetStmt = do
   _ <- symbol "let"
-  name <- parseIdent
+  name <- choice [Just <$> parseIdent, symbolic '_' $> Nothing]
   params <- many param
   ty <- optional tyAnnot
   _ <- symbolic '='
@@ -101,7 +98,7 @@ parseApp = liftA2 (foldl App) parseAtomicExp (some parseAtomicExp) <?> "Applicat
 parseLet :: Parser Exp
 parseLet = do
   _ <- symbol "let"
-  name <- parseIdent
+  name <- choice [Just <$> parseIdent, symbolic '_' $> Nothing]
   params <- many param
   ty <- optional tyAnnot
   _ <- symbolic '='
@@ -147,15 +144,6 @@ parseFst = Fst <$> (symbol "fst" *> parseAtomicExp)
 
 parseSnd :: Parser Exp
 parseSnd = Snd <$> (symbol "snd" *> parseAtomicExp)
-
-parsePattern :: Parser Pattern
-parsePattern = choice [parsePPair, parsePVar] <?> "Pattern"
-
-parsePPair :: Parser Pattern
-parsePPair = parens (PPair <$> parsePattern <* symbolic ',' <*> parsePattern) <?> "Pattern Pair"
-
-parsePVar :: Parser Pattern
-parsePVar = PVar <$> parseIdent
 
 parseTy :: Parser Ty
 parseTy = choice [parseTyArrow, parseAtomicTy] <?> "Type"

@@ -11,18 +11,13 @@ data Ty
   | TyVar Int
   deriving (Eq, Show)
 
-data Pattern
-  = PVar ByteString
-  | PPair Pattern Pattern
-  deriving (Eq, Show)
-
 data Exp
   = Var ByteString
   | Int Int
   | Bool Bool
   | Fun (ByteString, Maybe Ty) Exp
   | App Exp Exp
-  | Let ByteString (Maybe Ty) Exp Exp
+  | Let (Maybe ByteString) (Maybe Ty) Exp Exp
   | If Exp Exp Exp
   | Pair Exp Exp
   | Fst Exp
@@ -30,5 +25,4 @@ data Exp
   deriving (Eq, Show)
 
 data Stmt
-  = LetStmt ByteString (Maybe Ty) Exp
-  | ExpStmt Exp
+  = LetStmt (Maybe ByteString) (Maybe Ty) Exp

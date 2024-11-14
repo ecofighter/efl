@@ -69,12 +69,12 @@ caMachineSpec = do
 
     context "let expressions" $ do
       it "evaluates simple let bindings" $ do
-        let expr = Let "x" Nothing (Int 42) (Var "x")
+        let expr = Let (Just "x") Nothing (Int 42) (Var "x")
         evalWithPrimitives expr `shouldBe` Right (VInt 42)
 
       it "handles nested let bindings" $ do
-        let expr = Let "x" Nothing (Int 10)
-                    (Let "y" Nothing (Int 20)
+        let expr = Let (Just "x") Nothing (Int 10)
+                    (Let (Just "y") Nothing (Int 20)
                       (App (App (Var "add") (Var "x")) (Var "y")))
         evalWithPrimitives expr `shouldBe` Right (VInt 30)
 

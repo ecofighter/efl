@@ -40,7 +40,7 @@ cekSpec = do
         eval globalEnv (Var "y") `shouldBe` Just (VBool True)
 
       it "prefers local bindings over global ones" $ do
-        let e = Let "x" Nothing (Int 10) (Var "x")
+        let e = Let (Just "x") Nothing (Int 10) (Var "x")
         eval globalEnv e `shouldBe` Just (VInt 10)
 
       it "uses global functions" $ do
@@ -48,7 +48,7 @@ cekSpec = do
         eval globalEnv e `shouldBe` Just (VInt 10)
 
       it "combines local and global bindings" $ do
-        let e = Let "z" Nothing (Int 100) (App (Var "id") (Var "x"))
+        let e = Let (Just "z") Nothing (Int 100) (App (Var "id") (Var "x"))
         eval globalEnv e `shouldBe` Just (VInt 42)
 
     describe "Function evaluation" $ do
@@ -68,19 +68,19 @@ cekSpec = do
 
     describe "Let expressions" $ do
       it "evaluates simple let binding" $ do
-        let letExp = Let "x" Nothing (Int 42) (Var "x")
+        let letExp = Let (Just "x") Nothing (Int 42) (Var "x")
         eval emptyEnv letExp `shouldBe` Just (VInt 42)
 
       it "evaluates nested let bindings" $ do
         let nestedLet =
-              Let "x" Nothing (Int 42) $
-                Let "y" Nothing (Int 10) $
+              Let (Just "x") Nothing (Int 42) $
+                Let (Just "y") Nothing (Int 10) $
                   Var "x"
         eval emptyEnv nestedLet `shouldBe` Just (VInt 42)
 
       it "evaluates let with function definition" $ do
         let letFun =
-              Let "f" Nothing (Fun ("x", Nothing) (Var "x")) $
+              Let (Just "f") Nothing (Fun ("x", Nothing) (Var "x")) $
                 App (Var "f") (Int 42)
         eval emptyEnv letFun `shouldBe` Just (VInt 42)
 
@@ -100,15 +100,15 @@ cekSpec = do
     describe "Complex expressions" $ do
       it "evaluates nested function applications" $ do
         let nestedApp =
-              Let "f" Nothing (Fun ("x", Nothing) (Var "x")) $
-                Let "g" Nothing (Fun ("x", Nothing) (Var "x")) $
+              Let (Just "f") Nothing (Fun ("x", Nothing) (Var "x")) $
+                Let (Just "g") Nothing (Fun ("x", Nothing) (Var "x")) $
                   App (Var "f") (App (Var "g") (Int 42))
         eval emptyEnv nestedApp `shouldBe` Just (VInt 42)
 
       it "evaluates multi-argument function application" $ do
         let multiArgApp =
               Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
                 $ App (App (Var "f") (Int 42)) (Int 10)
@@ -116,9 +116,9 @@ cekSpec = do
 
       it "evaluates complex conditional expressions" $ do
         let e =
-              Let "x" Nothing (Int 10) $
+              Let (Just "x") Nothing (Int 10) $
                 If
-                  ( Let "y" Nothing (Int 20) $
+                  ( Let (Just "y") Nothing (Int 20) $
                       Bool True
                   )
                   (Var "x")
@@ -128,7 +128,7 @@ cekSpec = do
       it "evaluates expressions with mixed global and local bindings" $ do
         let globalEnv = [("g", VInt 100)]
         let e =
-              Let "f" Nothing (Fun ("x", Nothing) (Var "g")) $
+              Let (Just "f") Nothing (Fun ("x", Nothing) (Var "g")) $
                 App (Var "f") (Int 42)
         eval globalEnv e `shouldBe` Just (VInt 100)
 
@@ -148,7 +148,7 @@ cekSpec = do
       it "fails on partial application" $ do
         let e =
               Let
-                "f"
+                (Just "f")
                 Nothing
                 (Fun ("x", Nothing) (Fun ("y", Nothing) (Var "x")))
                 (App (Var "f") (Int 42))

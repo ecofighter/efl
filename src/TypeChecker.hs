@@ -9,6 +9,7 @@ module TypeChecker
     TypeError (..),
     Substitution,
     TyScheme (..),
+    TypeEnv,
   )
 where
 
@@ -92,10 +93,6 @@ instance Substitutable TypeEnv where
   apply s = Map.map (apply s)
   ftv = freeTypeVarsEnv
 
-instance Substitutable Pattern where
-  apply _ = id -- パターンには型変数は含まれない
-  ftv _ = Set.empty
-
 -- 型の単一化
 unify :: (State TyState :> es, Error TypeError :> es) => Ty -> Ty -> Eff es Substitution
 unify t1 t2 = do
@@ -172,17 +169,17 @@ infer env expr = case expr of
     retTy <- newTyVar
     s <- unify funTy (TyArr argTy retTy)
     return $ apply s retTy
-  Let name maybeNameTy value body -> do
+  Let maybeName maybeTy value body -> do
     valueTy <- infer env value
-    case maybeNameTy of
+    ty <- case maybeTy of
       Just annotTy -> do
         s <- unify annotTy valueTy
-        let valueTy' = apply s valueTy
-        let scheme = generalize env valueTy'
-        infer (Map.insert name scheme env) body
-      Nothing -> do
-        let scheme = generalize env valueTy
-        infer (Map.insert name scheme env) body
+        pure $ apply s valueTy
+      Nothing -> pure valueTy
+    let scheme = generalize env ty
+    case maybeName of
+      Just name -> infer (Map.insert name scheme env) body
+      Nothing -> infer env body
   If cond then_ else_ -> do
     condTy <- infer env cond
     s1 <- unify condTy TyBool
