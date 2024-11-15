@@ -59,20 +59,20 @@ processCommand state@InterpreterState {..} cmd = case cmd of
     return $ Just state
   Quit -> return Nothing
   TypeOf src -> do
-    case parseString parseStmt mempty (BS.unpack src) of
+    case parseByteString parseStmt mempty src of
       Success stmt -> case stmt of
         LetStmt _ _ expr -> case typecheck' typeEnv expr Nothing of
           Right (ty, _) -> outputStrLn $ showType ty
           Left e -> outputStrLn $ "Type error: " ++ show e
-        LetRecStmt name param retTy body ->
-          let expr = LetRec name param retTy body (Var name)
+        LetRecStmt name param funTy body ->
+          let expr = LetRec name param funTy body (Var name)
            in case typecheck' typeEnv expr Nothing of
                 Right (ty, _) -> outputStrLn $ showType ty
                 Left e -> outputStrLn $ "Type error: " ++ show e
       Failure e -> outputStrLn $ "Parse error: " ++ show e
     return $ Just state
   Eval src -> do
-    case parseString parseStmt mempty (BS.unpack src) of
+    case parseByteString parseStmt mempty src of
       Success stmt -> case stmt of
         LetStmt name annotTy expr -> case typecheck' typeEnv expr annotTy of
           Right (ty, _) -> case eval globals expr of
@@ -94,8 +94,8 @@ processCommand state@InterpreterState {..} cmd = case cmd of
           Left e -> do
             outputStrLn $ "Type error: " ++ show e
             return $ Just state
-        LetRecStmt name (param, _) retTy body ->
-          let actualRetTy = case retTy of
+        LetRecStmt name (param, _) funTy body ->
+          let actualRetTy = case funTy of
                 Just (TyArr _ ret) -> Just ret
                 _ -> Nothing
               expr = LetRec name (param, Nothing) actualRetTy body (Var name)

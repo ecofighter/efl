@@ -24,7 +24,7 @@ data Value
   | VInt Int
   | VBool Bool
   | VClosure Code [Value]
-  | VRecClosure ByteString Code [Value]  -- 新しく追加: 再帰クロージャ
+  | VRecClosure ByteString Code [Value] -- 新しく追加: 再帰クロージャ
   | VPair Value Value
   | VPrim PrimInfo
   deriving (Generic)
@@ -74,10 +74,9 @@ data CAMError
 data Instr
   = Access Int
   | Closure Code
-  | RecClosure ByteString Code  -- 新しく追加: 再帰クロージャ命令
+  | RecClosure ByteString Code -- 新しく追加: 再帰クロージャ命令
   | Apply
   | Return
-  | Push
   | Quote Value
   | Cons
   | Car
@@ -129,21 +128,23 @@ step s@State {..} = \case
       closure = VRecClosure name c env
   Apply -> case stack of
     (v : VClosure c env' : rest) ->
-      Right State
-        { code = c,
-          env = v : env',
-          stack = [],
-          dump = (code, env, rest) : dump,
-          globals = globals
-        }
+      Right
+        State
+          { code = c,
+            env = v : env',
+            stack = [],
+            dump = (code, env, rest) : dump,
+            globals = globals
+          }
     (v : VRecClosure name c env' : rest) ->
-      Right State
-        { code = c,
-          env = v : closure : env',  -- クロージャ自身を環境に追加
-          stack = [],
-          dump = (code, env, rest) : dump,
-          globals = globals
-        }
+      Right
+        State
+          { code = c,
+            env = v : closure : env', -- クロージャ自身を環境に追加
+            stack = [],
+            dump = (code, env, rest) : dump,
+            globals = globals
+          }
       where
         closure = VRecClosure name c env'
     (v : VPrim prim@PrimInfo {..} : rest) ->
@@ -158,19 +159,18 @@ step s@State {..} = \case
   Return -> case dump of
     ((code', env', stack') : dump') ->
       case stack of
-        (v : _) -> Right State
-          { code = code',
-            env = env',
-            stack = v : stack',
-            dump = dump',
-            globals = globals
-          }
+        (v : _) ->
+          Right
+            State
+              { code = code',
+                env = env',
+                stack = v : stack',
+                dump = dump',
+                globals = globals
+              }
         [] -> Left $ StackUnderflow "Return"
     [] -> Left $ RuntimeError "Return from top-level"
   Quote v -> Right s {stack = v : stack}
-  Push -> case stack of
-    (v : rest) -> Right s {stack = v : v : rest}
-    [] -> Left $ StackUnderflow "Push"
   Cons -> case stack of
     (v2 : v1 : rest) -> Right s {stack = VPair v1 v2 : rest}
     _ -> Left $ StackUnderflow "Cons"
@@ -182,10 +182,11 @@ step s@State {..} = \case
     _ -> Left $ TypeError "Cdr: Expected pair"
   Test c1 c2 -> case stack of
     (VBool b : rest) ->
-      Right s
-        { code = (if b then c1 else c2) ++ code,
-          stack = rest
-        }
+      Right
+        s
+          { code = (if b then c1 else c2) ++ code,
+            stack = rest
+          }
     _ -> Left $ TypeError "Test: Expected boolean"
   CAMachine.Let -> case stack of
     (v : _) -> Right s {env = v : env}
@@ -210,22 +211,22 @@ compileWithEnv env = \case
   App e1 e2 ->
     compileWithEnv env e1 ++ compileWithEnv env e2 ++ [Apply]
   Syntax.Let (Just x) _ e1 e2 ->
-    compileWithEnv env e1 
-    ++ [CAMachine.Let] 
-    ++ compileWithEnv (x : env) e2 
-    ++ [EndLet]
+    compileWithEnv env e1
+      ++ [CAMachine.Let]
+      ++ compileWithEnv (x : env) e2
+      ++ [EndLet]
   Syntax.Let Nothing _ e1 e2 ->
     compileWithEnv env e1
-    ++ compileWithEnv env e2
+      ++ compileWithEnv env e2
   LetRec name (param, _) _ body expr ->
     [RecClosure name (compileWithEnv (param : name : env) body ++ [Return])]
-    ++ [CAMachine.Let]
-    ++ compileWithEnv (name : env) expr
-    ++ [EndLet]
+      ++ [CAMachine.Let]
+      ++ compileWithEnv (name : env) expr
+      ++ [EndLet]
   If e1 e2 e3 ->
     compileWithEnv env e1 ++ [Test (compileWithEnv env e2) (compileWithEnv env e3)]
   Pair e1 e2 ->
-    compileWithEnv env e1 ++ [Push] ++ compileWithEnv env e2 ++ [Cons]
+    compileWithEnv env e1 ++ compileWithEnv env e2 ++ [Cons]
   Fst e -> compileWithEnv env e ++ [Car]
   Snd e -> compileWithEnv env e ++ [Cdr]
 

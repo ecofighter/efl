@@ -30,7 +30,7 @@ reserved s = Set.member s set
         ]
 
 parseStmt :: Parser Stmt
-parseStmt = choice [try parseLetStmt, parseLetRecStmt] <?> "Statement"
+parseStmt = choice [try parseLetRecStmt, try parseLetStmt] <* eof <?> "Statement"
 
 parseLetStmt :: Parser Stmt
 parseLetStmt = do
@@ -55,12 +55,11 @@ parseLetRecStmt = do
   _ <- symbol "let"
   _ <- symbol "rec"
   name <- parseIdent
-  p <- param
-  ps <- many param
+  params <- some param
   ty <- optional tyAnnot
   _ <- symbolic '='
   body <- parseExp
-  pure (LetRecStmt name p ty (foldr Fun body ps)) <?> "Let Statement"
+  pure (LetRecStmt name (head params) ty (foldr Fun body (tail params))) <?> "Let Statement"
   where
     param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
     annotated = parens $ do
@@ -74,9 +73,9 @@ parseExp :: Parser Exp
 parseExp =
   choice
     [ try parseLetRec,
-      parseLet,
-      parseFun,
-      parseIf,
+      try parseLet,
+      try parseFun,
+      try parseIf,
       try parseApp,
       try parseFst,
       try parseSnd,
@@ -124,12 +123,15 @@ parseLet = do
   _ <- symbol "let"
   name <- choice [Just <$> parseIdent, symbolic '_' $> Nothing]
   params <- many param
-  ty <- optional tyAnnot
+  returnTy <- optional tyAnnot
   _ <- symbolic '='
   body <- parseExp
   _ <- symbol "in"
   expr <- parseExp
-  pure (Let name ty (foldr Fun body params) expr) <?> "Let Expression"
+  let wholeTy = case returnTy of
+        Nothing -> Nothing
+        Just retTy -> Just $ foldr TyArr retTy [t | (_, Just t) <- params]
+  pure (Let name wholeTy (foldr Fun body params) expr)
   where
     param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
     annotated = parens $ do
@@ -144,14 +146,13 @@ parseLetRec = do
   _ <- symbol "let"
   _ <- symbol "rec"
   name <- parseIdent
-  p <- param
-  ps <- some param
+  params <- some param
   ty <- optional tyAnnot
   _ <- symbolic '='
   body <- parseExp
   _ <- symbol "in"
   expr <- parseExp
-  pure (LetRec name p ty (foldr Fun body ps) expr) <?> "Let Expression"
+  pure (LetRec name (head params) ty (foldr Fun body (tail params)) expr) <?> "Let Expression"
   where
     param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
     annotated = parens $ do

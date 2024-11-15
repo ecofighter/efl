@@ -154,8 +154,12 @@ infer env expr = case expr of
   Bool _ -> return TyBool
   Fun (param, maybeParamTy) body -> do
     paramTy <- maybe newTyVar return maybeParamTy
-    bodyTy <- infer (Map.insert param (Forall [] paramTy) env) body
-    return $ TyArr paramTy bodyTy
+    s1 <- gets tySubst
+    let paramTy' = apply s1 paramTy
+        paramEnv = Map.insert param (Forall [] paramTy') env
+    bodyTy <- infer paramEnv body
+    s2 <- gets tySubst
+    return $ TyArr (apply s2 paramTy') (apply s2 bodyTy)
   App fun arg -> do
     funTy <- infer env fun
     argTy <- infer env arg
@@ -164,29 +168,45 @@ infer env expr = case expr of
     return $ apply s retTy
   Let maybeName maybeTy value body -> do
     valueTy <- infer env value
-    ty <- case maybeTy of
-      Just annotTy -> do
-        s <- unify valueTy annotTy
-        pure $ apply s annotTy  -- Changed from valueTy to annotTy
-      Nothing -> pure valueTy
-    let scheme = generalize env ty
-    case maybeName of
-      Just name -> infer (Map.insert name scheme env) body
-      Nothing -> infer env body
+    s1 <- gets tySubst
+    let valueTy' = apply s1 valueTy
+    case maybeTy of
+      Just ty -> do
+        s2 <- unify valueTy' ty
+        let valueTy'' = apply s2 valueTy'
+            env' = case maybeName of
+              Just name -> Map.insert name (generalize env valueTy'') env
+              Nothing -> env
+        infer (apply s2 env') body
+      Nothing -> do
+        let env' = case maybeName of
+              Just name -> Map.insert name (generalize env valueTy') env
+              Nothing -> env
+        infer env' body
   LetRec name (param, maybeParamTy) maybeRetTy fun body -> do
+    -- Get parameter and return types
     paramTy <- maybe newTyVar return maybeParamTy
-    funRetTy <- maybe newTyVar return maybeRetTy
-    let funcTy = TyArr paramTy funRetTy
-        funScheme = Forall [] funcTy
-        tempEnv = Map.insert name funScheme env
-        paramScheme = Forall [] paramTy
-        funEnv = Map.insert param paramScheme tempEnv
-    actualBodyTy <- infer funEnv fun
-    s1 <- unify actualBodyTy funRetTy
-    let finalTy = apply s1 funcTy
-        scheme = generalize env finalTy
-    bodyTy <- infer (Map.insert name scheme env) body
-    return bodyTy
+    retTy <- maybe newTyVar return maybeRetTy
+    -- Create the expected function type
+    let funTy = TyArr paramTy retTy
+    -- Add non-polymorphic bindings to environment for recursive function
+    let recEnv =
+          Map.insert name (Forall [] funTy) $
+            Map.insert param (Forall [] paramTy) env
+    -- Infer the actual type of function body
+    actualBodyTy <- infer recEnv fun
+    -- Unify the actual body type with the expected return type and get current substitution
+    s1 <- unify actualBodyTy retTy
+    let paramTy' = apply s1 paramTy
+        retTy' = apply s1 retTy
+        funTy' = TyArr paramTy' retTy'
+    -- Create new environment with generalized function type, applying the substitution
+    let env' = Map.insert name (Forall [] funTy') (apply s1 env)
+    -- Infer the type of the body expression
+    bodyTy <- infer env' body
+    -- Get final substitution and apply it
+    s2 <- gets tySubst
+    return $ apply s2 bodyTy
   If cond then_ else_ -> do
     condTy <- infer env cond
     s1 <- unify condTy TyBool
@@ -213,16 +233,17 @@ infer env expr = case expr of
     return $ apply s ty2
 
 primitivesTypes :: TypeEnv
-primitivesTypes = Map.fromList
-  [ ("add", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
-  , ("sub", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
-  , ("mul", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
-  , ("div", Forall [] (TyArr TyInt (TyArr TyInt TyInt)))
-  , ("neg", Forall [] (TyArr TyInt TyInt))
-  , ("eq", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  , ("lt", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  , ("gt", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  , ("le", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  , ("ge", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  , ("ne", Forall [] (TyArr TyInt (TyArr TyInt TyBool)))
-  ]
+primitivesTypes =
+  Map.fromList
+    [ ("add", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
+      ("sub", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
+      ("mul", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
+      ("div", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
+      ("neg", Forall [] (TyArr TyInt TyInt)),
+      ("eq", Forall [0] (TyArr (TyVar 0) (TyArr (TyVar 0) TyBool))),
+      ("lt", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
+      ("gt", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
+      ("le", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
+      ("ge", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
+      ("ne", Forall [0] (TyArr (TyVar 0) (TyArr (TyVar 0) TyBool)))
+    ]
