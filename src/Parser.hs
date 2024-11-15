@@ -30,7 +30,7 @@ reserved s = Set.member s set
         ]
 
 parseStmt :: Parser Stmt
-parseStmt = parseLetStmt <?> "Statement"
+parseStmt = choice [try parseLetStmt, parseLetRecStmt] <?> "Statement"
 
 parseLetStmt :: Parser Stmt
 parseLetStmt = do
@@ -50,10 +50,31 @@ parseLetStmt = do
       pure (idnt, Just ty)
     tyAnnot = symbolic ':' *> parseTy
 
+parseLetRecStmt :: Parser Stmt
+parseLetRecStmt = do
+  _ <- symbol "let"
+  _ <- symbol "rec"
+  name <- parseIdent
+  p <- param
+  ps <- many param
+  ty <- optional tyAnnot
+  _ <- symbolic '='
+  body <- parseExp
+  pure (LetRecStmt name p ty (foldr Fun body ps)) <?> "Let Statement"
+  where
+    param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
+    annotated = parens $ do
+      idnt <- parseIdent
+      _ <- symbolic ':'
+      ty <- parseTy
+      pure (idnt, Just ty)
+    tyAnnot = symbolic ':' *> parseTy
+
 parseExp :: Parser Exp
 parseExp =
   choice
-    [ parseLet,
+    [ try parseLetRec,
+      parseLet,
       parseFun,
       parseIf,
       try parseApp,
@@ -65,11 +86,14 @@ parseExp =
 
 parseAtomicExp :: Parser Exp
 parseAtomicExp =
-  choice [parseVar, parseInt, parseBool, try parsePair, parens parseExp]
+  choice [parseVar, parseUnit, parseInt, parseBool, try parsePair, parens parseExp]
     <?> "Atomic Expression"
 
 parseVar :: Parser Exp
 parseVar = Var <$> parseIdent <?> "Variable"
+
+parseUnit :: Parser Exp
+parseUnit = symbol "()" $> Unit <?> "Unit value"
 
 parseInt :: Parser Exp
 parseInt = Int . fromInteger <$> integer <?> "Integer value"
@@ -106,6 +130,28 @@ parseLet = do
   _ <- symbol "in"
   expr <- parseExp
   pure (Let name ty (foldr Fun body params) expr) <?> "Let Expression"
+  where
+    param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
+    annotated = parens $ do
+      idnt <- parseIdent
+      _ <- symbolic ':'
+      ty <- parseTy
+      pure (idnt, Just ty)
+    tyAnnot = symbolic ':' *> parseTy
+
+parseLetRec :: Parser Exp
+parseLetRec = do
+  _ <- symbol "let"
+  _ <- symbol "rec"
+  name <- parseIdent
+  p <- param
+  ps <- some param
+  ty <- optional tyAnnot
+  _ <- symbolic '='
+  body <- parseExp
+  _ <- symbol "in"
+  expr <- parseExp
+  pure (LetRec name p ty (foldr Fun body ps) expr) <?> "Let Expression"
   where
     param = choice [annotated, fmap (,) parseIdent <*> pure Nothing]
     annotated = parens $ do
@@ -152,6 +198,9 @@ parseAtomicTy :: Parser Ty
 parseAtomicTy =
   choice [parseTyInt, parseTyBool, try parseTyProd, parens parseTy]
     <?> "Atomic Type"
+
+parseTyUnit :: Parser Ty
+parseTyUnit = symbol "Unit" $> TyUnit <?> "Type Unit"
 
 parseTyInt :: Parser Ty
 parseTyInt = symbol "Int" $> TyInt <?> "Type Int"

@@ -20,26 +20,32 @@ import GHC.Generics
 import Syntax
 
 data Value
-  = VInt Int
+  = VUnit
+  | VInt Int
   | VBool Bool
   | VClosure Code [Value]
+  | VRecClosure ByteString Code [Value]  -- 新しく追加: 再帰クロージャ
   | VPair Value Value
   | VPrim PrimInfo
   deriving (Generic)
 
 instance Show Value where
   show = \case
+    VUnit -> "()"
     VInt n -> show n
     VBool b -> show b
     VClosure _ _ -> "<closure>"
+    VRecClosure {} -> "<recursive closure>"
     VPair v1 v2 -> "(" ++ show v1 ++ ", " ++ show v2 ++ ")"
     VPrim _ -> "<primitive>"
 
 instance Eq Value where
+  VUnit == VUnit = True
   VInt n1 == VInt n2 = n1 == n2
   VBool b1 == VBool b2 = b1 == b2
   VPair v1 v2 == VPair v3 v4 = v1 == v3 && v2 == v4
   VClosure c1 e1 == VClosure c2 e2 = c1 == c2 && e1 == e2
+  VRecClosure n1 c1 e1 == VRecClosure n2 c2 e2 = n1 == n2 && c1 == c2 && e1 == e2
   VPrim p1 == VPrim p2 = p1 == p2
   _ == _ = False
 
@@ -68,6 +74,7 @@ data CAMError
 data Instr
   = Access Int
   | Closure Code
+  | RecClosure ByteString Code  -- 新しく追加: 再帰クロージャ命令
   | Apply
   | Return
   | Push
@@ -117,6 +124,9 @@ step s@State {..} = \case
     Just v -> Right s {stack = v : stack}
     Nothing -> Left $ UnboundVariable name
   Closure c -> Right s {stack = VClosure c env : stack}
+  RecClosure name c -> Right s {stack = closure : stack}
+    where
+      closure = VRecClosure name c env
   Apply -> case stack of
     (v : VClosure c env' : rest) ->
       Right State
@@ -126,6 +136,16 @@ step s@State {..} = \case
           dump = (code, env, rest) : dump,
           globals = globals
         }
+    (v : VRecClosure name c env' : rest) ->
+      Right State
+        { code = c,
+          env = v : closure : env',  -- クロージャ自身を環境に追加
+          stack = [],
+          dump = (code, env, rest) : dump,
+          globals = globals
+        }
+      where
+        closure = VRecClosure name c env'
     (v : VPrim prim@PrimInfo {..} : rest) ->
       let newArgStack = v : argStack
           newPrim = prim {argStack = newArgStack}
@@ -182,6 +202,7 @@ compileWithEnv env = \case
   Var x -> case elemIndex x env of
     Just i -> [Access i]
     Nothing -> [Global x]
+  Unit -> [Quote VUnit]
   Int n -> [Quote (VInt n)]
   Bool b -> [Quote (VBool b)]
   Fun (x, _) body ->
@@ -189,13 +210,18 @@ compileWithEnv env = \case
   App e1 e2 ->
     compileWithEnv env e1 ++ compileWithEnv env e2 ++ [Apply]
   Syntax.Let (Just x) _ e1 e2 ->
-    compileWithEnv env e1
-      ++ [CAMachine.Let]
-      ++ compileWithEnv (x : env) e2
-      ++ [EndLet]
+    compileWithEnv env e1 
+    ++ [CAMachine.Let] 
+    ++ compileWithEnv (x : env) e2 
+    ++ [EndLet]
   Syntax.Let Nothing _ e1 e2 ->
     compileWithEnv env e1
     ++ compileWithEnv env e2
+  LetRec name (param, _) _ body expr ->
+    [RecClosure name (compileWithEnv (param : name : env) body ++ [Return])]
+    ++ [CAMachine.Let]
+    ++ compileWithEnv (name : env) expr
+    ++ [EndLet]
   If e1 e2 e3 ->
     compileWithEnv env e1 ++ [Test (compileWithEnv env e2) (compileWithEnv env e3)]
   Pair e1 e2 ->

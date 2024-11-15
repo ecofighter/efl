@@ -8,29 +8,33 @@ import Data.ByteString.Char8 (ByteString)
 import Syntax
 
 type LocalEnv = [(ByteString, Value)]
-
 type GlobalEnv = [(ByteString, Value)]
 
 data PrimInfo = PrimInfo
-  { arity :: Int, -- 関数の引数の数
-    impl :: [Value] -> Maybe Value -- 実装
+  { arity :: Int,
+    impl :: [Value] -> Maybe Value
   }
 
 data Value
-  = VInt Int
+  = VUnit
+  | VInt Int
   | VBool Bool
   | VClos Exp LocalEnv
   | VPair Value Value
   | VPrim PrimInfo
+  | VRecClos ByteString (ByteString, Maybe Ty) Exp LocalEnv  -- 追加: 再帰関数用のコンストラクタ
 
 instance Show Value where
+  show VUnit = "()"
   show (VInt n) = show n
   show (VBool b) = show b
   show (VClos _ _) = "<closure>"
   show (VPair v1 v2) = "(" ++ show v1 ++ ", " ++ show v2 ++ ")"
   show (VPrim _) = "<primitive>"
+  show (VRecClos {}) = "<recursive closure>"
 
 instance Eq Value where
+  VUnit == VUnit = True
   VInt n1 == VInt n2 = n1 == n2
   VBool b1 == VBool b2 = b1 == b2
   VPair v1 v2 == VPair v3 v4 = v1 == v3 && v2 == v4
@@ -41,10 +45,10 @@ data Cont
   | ArgK Value LocalEnv Cont
   | LetK ByteString Exp LocalEnv Cont
   | IfK Exp Exp LocalEnv Cont
-  | PairK1 Exp LocalEnv Cont -- 追加: ペアの第1要素評価用
-  | PairK2 Value Cont -- 追加: ペアの第2要素評価用
-  | FstK Cont -- 追加: 第1要素取得用
-  | SndK Cont -- 追加: 第2要素取得用
+  | PairK1 Exp LocalEnv Cont
+  | PairK2 Value Cont
+  | FstK Cont
+  | SndK Cont
   | HaltK
   deriving (Eq, Show)
 
@@ -95,7 +99,6 @@ primitives =
     nePrim [VBool x, VBool y] = Just $ VBool (x /= y)
     nePrim _ = Nothing
 
--- 変数を探す際は、まずローカル環境を確認し、見つからなければグローバル環境を確認する
 lookupVar :: ByteString -> LocalEnv -> GlobalEnv -> Maybe Value
 lookupVar x localEnv globalEnv =
   case lookup x localEnv of
@@ -108,12 +111,16 @@ step (Run c e g k) = case c of
   Var x -> case lookupVar x e g of
     Just val -> applyK val k g
     Nothing -> Nothing
+  Unit -> applyK VUnit k g  -- 追加: ユニット値の評価
   Int n -> applyK (VInt n) k g
   Bool b -> applyK (VBool b) k g
   Fun (_, _) _ -> applyK (VClos c e) k g
   App e1 e2 -> Just $ Run e1 e g (FunK e2 e k)
   Let (Just x) _ e1 e2 -> Just $ Run e1 e g (LetK x e2 e k)
   Let Nothing _ e1 e2 -> Just $ Run e1 e g (LetK "$DUMMY" e2 e k)
+  LetRec f (param, _) _ body expr ->  -- 追加: 再帰関数の評価
+    let recClos = VRecClos f (param, Nothing) body e
+    in Just $ Run expr ((f, recClos) : e) g k
   If e1 e2 e3 -> Just $ Run e1 e g (IfK e2 e3 e k)
   Pair e1 e2 -> Just $ Run e1 e g (PairK1 e2 e k)
   Fst c' -> Just $ Run c' e g (FstK k)
@@ -126,10 +133,14 @@ applyK val k g = case k of
   ArgK fun _ k' -> case fun of
     VClos (Fun (x, _) body) funE ->
       Just $ Run body ((x, val) : funE) g k'
+    VRecClos f (param, _) body funE ->  -- 追加: 再帰関数呼び出しの処理
+      let recClos = VRecClos f (param, Nothing) body funE
+          newEnv = (f, recClos) : (param, val) : funE
+      in Just $ Run body newEnv g k'
     VPrim (PrimInfo {..}) ->
       if arity > 1
         then applyK (VPrim $ PrimInfo (arity - 1) (\args -> impl (val : args))) k' g
-        else case impl [val] of -- 単項関数の場合は直接評価
+        else case impl [val] of
           Just result -> applyK result k' g
           Nothing -> Nothing
     _ -> Nothing
@@ -148,7 +159,6 @@ applyK val k g = case k of
     VPair _ v2 -> applyK v2 k' g
     _ -> Nothing
 
--- 評価関数はグローバル環境を引数として受け取るように変更
 eval :: GlobalEnv -> Exp -> Maybe Value
 eval g c = go (Run c [] g HaltK)
   where
