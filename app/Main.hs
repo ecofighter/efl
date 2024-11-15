@@ -94,12 +94,10 @@ processCommand state@InterpreterState {..} cmd = case cmd of
           Left e -> do
             outputStrLn $ "Type error: " ++ show e
             return $ Just state
-        LetRecStmt name (param, _) funTy body ->
-          let actualRetTy = case funTy of
-                Just (TyArr _ ret) -> Just ret
-                _ -> Nothing
-              expr = LetRec name (param, Nothing) actualRetTy body (Var name)
-           in case typecheck' typeEnv expr Nothing of
+        LetRecStmt name param retTy body ->
+          -- Create the recursive function expression with preserved type annotations
+          let expr = LetRec name param retTy body (Var name)
+          in case typecheck' typeEnv expr Nothing of
                 Right (ty, _) -> case eval globals expr of
                   Right val -> do
                     outputStrLn $ show val ++ " : " ++ showType ty

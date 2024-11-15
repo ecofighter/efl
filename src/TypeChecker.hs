@@ -184,29 +184,34 @@ infer env expr = case expr of
               Nothing -> env
         infer env' body
   LetRec name (param, maybeParamTy) maybeRetTy fun body -> do
-    -- Get parameter and return types
+    -- Get parameter type
     paramTy <- maybe newTyVar return maybeParamTy
-    retTy <- maybe newTyVar return maybeRetTy
-    -- Create the expected function type
-    let funTy = TyArr paramTy retTy
-    -- Add non-polymorphic bindings to environment for recursive function
+    -- Create type variable for the whole function
+    funTyVar <- newTyVar
+    -- Add bindings to environment for recursive function and its parameter
+    -- Important: use funTyVar for the recursive function's type
     let recEnv =
-          Map.insert name (Forall [] funTy) $
+          Map.insert name (Forall [] funTyVar) $
             Map.insert param (Forall [] paramTy) env
     -- Infer the actual type of function body
     actualBodyTy <- infer recEnv fun
-    -- Unify the actual body type with the expected return type and get current substitution
-    s1 <- unify actualBodyTy retTy
-    let paramTy' = apply s1 paramTy
-        retTy' = apply s1 retTy
-        funTy' = TyArr paramTy' retTy'
-    -- Create new environment with generalized function type, applying the substitution
-    let env' = Map.insert name (Forall [] funTy') (apply s1 env)
-    -- Infer the type of the body expression
-    bodyTy <- infer env' body
-    -- Get final substitution and apply it
-    s2 <- gets tySubst
-    return $ apply s2 bodyTy
+    -- The function type should be paramTy -> actualBodyTy
+    let inferredFunTy = TyArr paramTy actualBodyTy
+    -- Unify the inferred function type with our type variable
+    s1 <- unify funTyVar inferredFunTy
+    -- If we have a return type annotation, unify it with the actual return type
+    s2 <- case maybeRetTy of
+      Just retTy -> unify (apply s1 actualBodyTy) retTy
+      Nothing -> return s1
+    -- Get the final function type after all unifications
+    let finalFunTy = apply s2 inferredFunTy
+    -- Update environment with generalized type scheme
+    let funcScheme = generalize env finalFunTy
+        resultEnv = Map.insert name funcScheme (apply s2 env)
+    -- Infer the type of the main body
+    bodyTy <- infer resultEnv body
+    s3 <- gets tySubst
+    return $ apply s3 bodyTy
   If cond then_ else_ -> do
     condTy <- infer env cond
     s1 <- unify condTy TyBool
