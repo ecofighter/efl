@@ -1,140 +1,79 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
 import CAMachine
-import Control.Monad
+import Control.Monad.IO.Class
 import Data.ByteString.Char8 (ByteString)
 import Data.ByteString.Char8 qualified as BS
 import Data.Map qualified as Map
 import Parser
 import Syntax
 import System.Console.Haskeline
-import Text.Trifecta
 import TypeChecker
 
-data Command
-  = Eval ByteString
-  | TypeOf ByteString
-  | Help
-  | Quit
-  deriving (Show)
-
-data InterpreterState = InterpreterState
-  { globals :: GlobalEnv,
-    typeEnv :: TypeEnv
+data REPLState = REPLState
+  { typeEnv :: TypeEnv,
+    globalEnv :: GlobalEnv
   }
 
-initialState :: InterpreterState
+initialState :: REPLState
 initialState =
-  InterpreterState
-    { globals = primitives,
-      typeEnv = primitivesTypes
+  REPLState
+    { typeEnv = primitivesTypes,
+      globalEnv = primitives
     }
 
-parseCommand :: ByteString -> Maybe Command
-parseCommand input = case BS.words input of
-  [":t", expr] -> Just $ TypeOf (BS.unwords ["let _ =", expr])
-  [":h"] -> Just Help
-  [":q"] -> Just Quit
-  _ -> Just $ Eval input
-
-showType :: Ty -> String
-showType TyInt = "Int"
-showType TyBool = "Bool"
-showType TyUnit = "Unit"
-showType (TyArr t1 t2) = "(" ++ showType t1 ++ " -> " ++ showType t2 ++ ")"
-showType (TyProd t1 t2) = "(" ++ showType t1 ++ ", " ++ showType t2 ++ ")"
-showType (TyVar n) = "t" ++ show n
-
-processCommand :: InterpreterState -> Command -> InputT IO (Maybe InterpreterState)
-processCommand state@InterpreterState {..} cmd = case cmd of
-  Help -> do
-    outputStrLn "Available commands:"
-    outputStrLn "  <expr>     Evaluate expression"
-    outputStrLn "  :t <expr>  Show type of expression"
-    outputStrLn "  :h         Show this help"
-    outputStrLn "  :q         Quit"
-    return $ Just state
-  Quit -> return Nothing
-  TypeOf src -> do
-    case parseByteString parseStmt mempty src of
-      Success stmt -> case stmt of
-        LetStmt _ _ expr -> case typecheck' typeEnv expr Nothing of
-          Right (ty, _) -> outputStrLn $ showType ty
-          Left e -> outputStrLn $ "Type error: " ++ show e
-        LetRecStmt name param funTy body ->
-          let expr = LetRec name param funTy body (Var name)
-           in case typecheck' typeEnv expr Nothing of
-                Right (ty, _) -> outputStrLn $ showType ty
-                Left e -> outputStrLn $ "Type error: " ++ show e
-      Failure e -> outputStrLn $ "Parse error: " ++ show e
-    return $ Just state
-  Eval src -> do
-    case parseByteString parseStmt mempty src of
-      Success stmt -> case stmt of
-        LetStmt name annotTy expr -> case typecheck' typeEnv expr annotTy of
-          Right (ty, _) -> case eval globals expr of
+process :: String -> REPLState -> IO (Either String (REPLState, ByteString, Value))
+process input state = do
+  case parseStmtFromBS (BS.pack input) of
+    Left err -> return $ Left $ "Parse error: " ++ err
+    Right stmt -> case typecheck' (typeEnv state) stmt of
+      Left err -> return $ Left $ "Type error: " ++ show err
+      Right (inferredTy, _) -> case stmt of
+        LetStmt name _ expr -> do
+          case eval (globalEnv state) expr of
+            Left err -> return $ Left $ "Evaluation error: " ++ show err
             Right val -> do
-              outputStrLn $ show val ++ " : " ++ showType ty
-              case name of
-                Just n -> do
-                  let scheme = generalize typeEnv ty
-                  return $
-                    Just $
-                      state
-                        { globals = (n, val) : globals,
-                          typeEnv = Map.insert n scheme typeEnv
-                        }
-                Nothing -> return $ Just state
-            Left e -> do
-              outputStrLn $ "Runtime error: " ++ show e
-              return $ Just state
-          Left e -> do
-            outputStrLn $ "Type error: " ++ show e
-            return $ Just state
-        LetRecStmt name param retTy body ->
-          -- Create the recursive function expression with preserved type annotations
-          let expr = LetRec name param retTy body (Var name)
-          in case typecheck' typeEnv expr Nothing of
-                Right (ty, _) -> case eval globals expr of
-                  Right val -> do
-                    outputStrLn $ show val ++ " : " ++ showType ty
-                    let scheme = generalize typeEnv ty
-                    return $
-                      Just $
-                        state
-                          { globals = (name, val) : globals,
-                            typeEnv = Map.insert name scheme typeEnv
-                          }
-                  Left e -> do
-                    outputStrLn $ "Runtime error: " ++ show e
-                    return $ Just state
-                Left e -> do
-                  outputStrLn $ "Type error: " ++ show e
-                  return $ Just state
-      Failure e -> do
-        outputStrLn $ "Parse error: " ++ show e
-        return $ Just state
+              let newTypeEnv = case name of
+                    Just n -> Map.insert n (generalize (typeEnv state) inferredTy) (typeEnv state)
+                    Nothing -> typeEnv state
+                  newGlobalEnv = case name of
+                    Just n -> (n, val) : globalEnv state
+                    Nothing -> globalEnv state
+              return $ Right (state {typeEnv = newTypeEnv, globalEnv = newGlobalEnv}, BS.pack (show inferredTy), val)
+        LetRecStmt name (param, paramTy) retTy body -> do
+          let funTy = TyArr paramTy retTy
+              expr = LetRec name (param, paramTy) retTy body (Var name)
+          case eval (globalEnv state) expr of
+            Left err -> return $ Left $ "Evaluation error: " ++ show err
+            Right val -> do
+              let newTypeEnv = Map.insert name (generalize (typeEnv state) funTy) (typeEnv state)
+                  newGlobalEnv = (name, val) : globalEnv state
+              return $ Right (state {typeEnv = newTypeEnv, globalEnv = newGlobalEnv}, BS.pack (show funTy), val)
 
 repl :: IO ()
-repl = runInputT defaultSettings $ do
-  outputStrLn "Simple ML Interpreter"
-  outputStrLn "Type :h for help"
-  loop initialState
+repl = runInputT defaultSettings (loop initialState)
   where
+    loop :: REPLState -> InputT IO ()
     loop state = do
-      minput <- getInputLine "> "
+      minput <- getInputLine "# "
       case minput of
         Nothing -> return ()
-        Just input -> case parseCommand (BS.pack input) of
-          Just cmd -> do
-            mstate' <- processCommand state cmd
-            forM_ mstate' loop
-          Nothing -> do
-            outputStrLn "Invalid command"
-            loop state
+        Just ":q" -> return ()
+        Just input -> do
+          result <- liftIO $ process input state
+          case result of
+            Left err -> do
+              outputStrLn $ "Error: " ++ err
+              loop state
+            Right (newState, ty, val) -> do
+              outputStrLn $ "Type: " ++ BS.unpack ty
+              outputStrLn $ "Value: " ++ show val
+              loop newState
 
 main :: IO ()
-main = repl
+main = do
+  putStrLn "Welcome to the MinCaml REPL!"
+  putStrLn "Enter expressions or :q to quit."
+  repl

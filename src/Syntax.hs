@@ -17,10 +17,10 @@ data Exp
   | Unit
   | Int Int
   | Bool Bool
-  | Fun (ByteString, Maybe Ty) Exp
+  | Fun (ByteString, Ty) Exp
   | App Exp Exp
-  | Let (Maybe ByteString) (Maybe Ty) Exp Exp
-  | LetRec ByteString (ByteString, Maybe Ty) (Maybe Ty) Exp Exp
+  | Let (Maybe ByteString) Ty Exp Exp
+  | LetRec ByteString (ByteString, Ty) Ty Exp Exp
   | If Exp Exp Exp
   | Pair Exp Exp
   | Fst Exp
@@ -28,5 +28,5 @@ data Exp
   deriving (Eq, Show)
 
 data Stmt
-  = LetStmt (Maybe ByteString) (Maybe Ty) Exp
-  | LetRecStmt ByteString (ByteString, Maybe Ty) (Maybe Ty) Exp
+  = LetStmt (Maybe ByteString) Ty Exp
+  | LetRecStmt ByteString (ByteString, Ty) Ty Exp
