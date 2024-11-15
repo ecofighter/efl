@@ -46,7 +46,7 @@ replSettings =
       autoAddHistory = True
     }
   where
-    commands = [":help", ":type", ":quit"]
+    commands = [":type", ":quit"]
 
 -- REPLの実行
 runRepl :: IO ()
