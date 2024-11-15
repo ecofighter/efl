@@ -134,7 +134,8 @@ evalStmt env = \case
     case mname of
       Just name -> return ((name, value) : env, value)
       Nothing -> return (env, value)
-  LetRecStmt name _ _ e -> do
+  LetRecStmt name (param, paramTy) ty body -> do
+    let e = LetRec name (param, paramTy) ty body (Var name)
     value <- eval env e
     return ((name, value) : env, value)
 
