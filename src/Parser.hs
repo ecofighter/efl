@@ -12,12 +12,12 @@ import Syntax
 import Text.Trifecta
 
 parseStmtFromBS :: ByteString -> Either String Stmt
-parseStmtFromBS input = case parseByteString (evalStateT parseStmt (ParserState 0)) mempty input of
+parseStmtFromBS input = case parseByteString (evalStateT (parseStmt <* eof) (ParserState 0)) mempty input of
   Success stmt -> Right stmt
   Failure e -> Left (show e)
 
 parseExpFromBS :: ByteString -> Either String Exp
-parseExpFromBS input = case parseByteString (evalStateT parseExp (ParserState 0)) mempty input of
+parseExpFromBS input = case parseByteString (evalStateT (parseExp <* eof) (ParserState 0)) mempty input of
   Success expr -> Right expr
   Failure e -> Left (show e)
 
@@ -46,7 +46,7 @@ reserved s = Set.member s set
         ]
 
 parseStmt :: EflParser Stmt
-parseStmt = choice [try parseLetRecStmt, try parseLetStmt] <* eof <?> "Statement"
+parseStmt = choice [try parseLetRecStmt, try parseLetStmt] <?> "Statement"
 
 parseLetStmt :: EflParser Stmt
 parseLetStmt = do
