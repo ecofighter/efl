@@ -76,7 +76,8 @@ parseLetRecStmt = do
   ty <- choice [try tyAnnot, freshTyVar]
   _ <- symbolic '='
   body <- parseExp
-  pure (LetRecStmt name (head params) ty (foldr Fun body (tail params))) <?> "Let Statement"
+  let wholeTy = foldr TyArr ty [t | (_, t) <- params]
+  pure (LetRecStmt name (head params) wholeTy (foldr Fun body (tail params))) <?> "LetRec Statement"
   where
     param = choice [annotated, fmap (,) parseIdent <*> freshTyVar]
     annotated = parens $ do
@@ -167,7 +168,8 @@ parseLetRec = do
   body <- parseExp
   _ <- symbol "in"
   expr <- parseExp
-  pure (LetRec name (head params) ty (foldr Fun body (tail params)) expr) <?> "Let Expression"
+  let wholeTy = foldr TyArr ty [t | (_, t) <- params]
+  pure (LetRec name (head params) wholeTy (foldr Fun body (tail params)) expr) <?> "Let Expression"
   where
     param = choice [annotated, fmap (,) parseIdent <*> freshTyVar]
     annotated = parens $ do

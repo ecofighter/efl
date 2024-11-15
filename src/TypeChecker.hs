@@ -2,263 +2,209 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module TypeChecker
-  ( typecheck,
-    typecheck',
-    inferStmt,
-    primitivesTypes,
-    generalize,
+  ( typeCheck,
+    typeCheckStmt,
+    initialTypeEnv,
     TypeError (..),
-    Substitution,
-    TyScheme (..),
     TypeEnv,
+    Substitution,
   )
 where
 
+import Control.Monad.Except
+import Control.Monad.State
 import Data.ByteString.Char8 (ByteString)
-import Data.Map (Map)
-import Data.Map qualified as Map
-import Data.Set qualified as Set
-import Effectful
-import Effectful.Error.Static
-import Effectful.State.Static.Local
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Syntax
 
+-- 型エラーを表す型
 data TypeError
-  = UnboundVariable ByteString
-  | TypeMismatch Ty Ty
-  | ExpectedFunction Ty
-  | ExpectedBool Ty
-  | OccursCheck Int Ty
+  = UnificationFailed Ty Ty
+  | UnboundVariable ByteString
+  | OccursCheckFailed Int Ty
+  | TypeMismatch String Ty Ty
   deriving (Show, Eq)
 
-data TyScheme = Forall [Int] Ty
-  deriving (Show, Eq)
+-- 型環境
+type TypeEnv = Map ByteString Ty
 
+-- 型代入
 type Substitution = Map Int Ty
 
-type TypeEnv = Map ByteString TyScheme
-
-data TyState = TyState
-  { tyCounter :: Int,
-    tySubst :: Substitution
+-- 型検査の状態
+data TypeState = TypeState
+  { typeCounter :: Int, -- フレッシュな型変数を生成するためのカウンター
+    typeSubst :: Substitution -- 現在の型代入
   }
 
--- Helper functions
-newTyVar :: (State TyState :> es) => Eff es Ty
-newTyVar = do
-  s <- get
-  put s {tyCounter = tyCounter s + 1}
-  return $ TyVar (tyCounter s)
+-- 型検査モナド
+type TypeCheck a = ExceptT TypeError (State TypeState) a
 
-freeTypeVars :: Ty -> Set.Set Int
-freeTypeVars = \case
-  TyVar n -> Set.singleton n
-  TyArr t1 t2 -> freeTypeVars t1 `Set.union` freeTypeVars t2
-  TyProd t1 t2 -> freeTypeVars t1 `Set.union` freeTypeVars t2
-  _ -> Set.empty
+-- 初期状態
+initialTypeState :: TypeState
+initialTypeState =
+  TypeState
+    { typeCounter = 0,
+      typeSubst = Map.empty
+    }
 
-freeTypeVarsScheme :: TyScheme -> Set.Set Int
-freeTypeVarsScheme (Forall vars ty) =
-  freeTypeVars ty `Set.difference` Set.fromList vars
+-- TypeCheckモナドを評価
+runTypeCheck :: TypeCheck a -> Either TypeError a
+runTypeCheck m = evalState (runExceptT m) initialTypeState
 
-freeTypeVarsEnv :: TypeEnv -> Set.Set Int
-freeTypeVarsEnv env =
-  Set.unions $ map freeTypeVarsScheme $ Map.elems env
+-- フレッシュな型変数を生成
+freshTyVar :: TypeCheck Ty
+freshTyVar = do
+  counter <- gets typeCounter
+  modify $ \s -> s {typeCounter = counter + 1}
+  return $ TyVar counter
 
-class Substitutable a where
-  apply :: Substitution -> a -> a
-  ftv :: a -> Set.Set Int
+-- 型の正規化（代入を適用）
+normalize :: Ty -> TypeCheck Ty
+normalize ty = do
+  subst <- gets typeSubst
+  return $ applySubst subst ty
+  where
+    applySubst :: Substitution -> Ty -> Ty
+    applySubst s = \case
+      TyVar n -> case Map.lookup n s of
+        Just t -> applySubst s t
+        Nothing -> TyVar n
+      TyArr t1 t2 -> TyArr (applySubst s t1) (applySubst s t2)
+      TyProd t1 t2 -> TyProd (applySubst s t1) (applySubst s t2)
+      t -> t
 
-instance Substitutable Ty where
-  apply s ty@(TyVar n) = Map.findWithDefault ty n s
-  apply s (TyArr t1 t2) = TyArr (apply s t1) (apply s t2)
-  apply s (TyProd t1 t2) = TyProd (apply s t1) (apply s t2)
-  apply _ ty = ty
-
-  ftv = freeTypeVars
-
-instance Substitutable TyScheme where
-  apply s (Forall vars ty) = Forall vars (apply s' ty)
-    where
-      s' = foldr Map.delete s vars
-  ftv = freeTypeVarsScheme
-
-instance Substitutable TypeEnv where
-  apply s = Map.map (apply s)
-  ftv = freeTypeVarsEnv
-
--- 型の単一化
-unify :: (State TyState :> es, Error TypeError :> es) => Ty -> Ty -> Eff es ()
+-- 単一化アルゴリズム
+unify :: Ty -> Ty -> TypeCheck ()
 unify t1 t2 = do
-  s <- gets tySubst
-  s' <- unifyWith s t1 t2
-  modify $ \st -> st {tySubst = s'}
+  t1' <- normalize t1
+  t2' <- normalize t2
+  unify' t1' t2'
+  where
+    unify' :: Ty -> Ty -> TypeCheck ()
+    unify' (TyVar n) t = bindTyVar n t
+    unify' t (TyVar n) = bindTyVar n t
+    unify' TyUnit TyUnit = return ()
+    unify' TyInt TyInt = return ()
+    unify' TyBool TyBool = return ()
+    unify' (TyArr a1 b1) (TyArr a2 b2) = do
+      unify a1 a2
+      unify b1 b2
+    unify' (TyProd a1 b1) (TyProd a2 b2) = do
+      unify a1 a2
+      unify b1 b2
+    unify' t1' t2' = throwError $ UnificationFailed t1' t2'
 
-unifyWith :: (State TyState :> es, Error TypeError :> es) => Substitution -> Ty -> Ty -> Eff es Substitution
-unifyWith s t1 t2 = case (apply s t1, apply s t2) of
-  (TyVar v1, TyVar v2) | v1 == v2 -> return s
-  (TyVar v, t) -> varBind v t
-  (t, TyVar v) -> varBind v t
-  (TyArr l1 r1, TyArr l2 r2) -> do
-    s1 <- unifyWith s l1 l2
-    unifyWith s1 (apply s1 r1) (apply s1 r2)
-  (TyProd l1 r1, TyProd l2 r2) -> do
-    s1 <- unifyWith s l1 l2
-    unifyWith s1 (apply s1 r1) (apply s1 r2)
-  _ | t1 == t2 -> return s
-  _ -> throwError $ TypeMismatch (apply s t1) (apply s t2)
+    bindTyVar :: Int -> Ty -> TypeCheck ()
+    bindTyVar n t = do
+      if occursCheck n t
+        then throwError $ OccursCheckFailed n t
+        else modify $ \s -> s {typeSubst = Map.insert n t (typeSubst s)}
 
-varBind :: (State TyState :> es, Error TypeError :> es) => Int -> Ty -> Eff es Substitution
-varBind u t
-  | t == TyVar u = gets tySubst
-  | u `Set.member` freeTypeVars t = throwError $ OccursCheck u t
-  | otherwise = do
-      s <- gets tySubst
-      let s' = Map.insert u t s
-      modify $ \st -> st {tySubst = s'}
-      return s'
+    occursCheck :: Int -> Ty -> Bool
+    occursCheck n = \case
+      TyVar m -> n == m
+      TyArr t1' t2' -> occursCheck n t1' || occursCheck n t2'
+      TyProd t1' t2' -> occursCheck n t1' || occursCheck n t2'
+      _ -> False
 
--- 型スキームのインスタンス化
-instantiate :: (State TyState :> es) => TyScheme -> Eff es Ty
-instantiate (Forall vars ty) = do
-  nvars <- mapM (const newTyVar) vars
-  let s = Map.fromList (zip vars (map (\case TyVar n -> TyVar n; _ -> error "impossible") nvars))
-  return $ apply s ty
-
--- 型の一般化
-generalize :: TypeEnv -> Ty -> TyScheme
-generalize env ty =
-  let vars = Set.toList $ ftv ty `Set.difference` ftv env
-   in Forall vars ty
-
--- 式の型推論
-inferExp :: (State TyState :> es, Error TypeError :> es) => TypeEnv -> Exp -> Eff es Ty
-inferExp env = \case
-  Var x -> case Map.lookup x env of
-    Just scheme -> instantiate scheme
-    Nothing -> throwError $ UnboundVariable x
+-- 式の型検査
+inferType :: TypeEnv -> Exp -> TypeCheck Ty
+inferType env = \case
   Unit -> return TyUnit
   Int _ -> return TyInt
   Bool _ -> return TyBool
-  Fun (param, paramTy) body -> do
-    let env' = Map.insert param (Forall [] paramTy) env
-    bodyTy <- inferExp env' body
-    s <- gets tySubst
-    return $ TyArr paramTy (apply s bodyTy)
+  Var x -> case Map.lookup x env of
+    Just t -> return t
+    Nothing -> throwError $ UnboundVariable x
+  Fun (x, paramTy) body -> do
+    bodyTy <- inferType (Map.insert x paramTy env) body
+    return $ TyArr paramTy bodyTy
   App e1 e2 -> do
-    funTy <- inferExp env e1
-    argTy <- inferExp env e2
-    s1 <- gets tySubst
-    let appliedFunTy = apply s1 funTy
-    case appliedFunTy of
-      TyArr t1 t2 -> do
-        unify t1 argTy
-        s2 <- gets tySubst
-        return $ apply s2 t2
-      _ -> throwError $ ExpectedFunction appliedFunTy
-  Let name annotatedTy valueExp bodyExp -> do
-    valueTy <- inferExp env valueExp
-    s1 <- gets tySubst
-    finalTy <- do
-      unify (apply s1 valueTy) annotatedTy
-      s2 <- gets tySubst
-      pure $ apply s2 valueTy
-    let currentEnv = apply s1 env
-        scheme = generalize currentEnv finalTy
-        env' = case name of
-          Just n -> Map.insert n scheme env
-          Nothing -> env
-    inferExp (apply s1 env') bodyExp
-  LetRec name (param, paramTy) retTy fun body -> do
-    let funTy = TyArr paramTy retTy
-        funScheme = Forall [] funTy
-        paramScheme = Forall [] paramTy
-        env' = Map.insert name funScheme $ Map.insert param paramScheme env
-    funBodyTy <- inferExp env' fun
-    unify funBodyTy retTy
-    s <- gets tySubst
-    let finalFunTy = apply s funTy
-        finalScheme = generalize env finalFunTy
-    inferExp (Map.insert name finalScheme env) body
+    funTy <- inferType env e1
+    argTy <- inferType env e2
+    funTy' <- normalize funTy
+    case funTy' of
+      TyArr paramTy resultTy -> do
+        unify paramTy argTy
+        return resultTy
+      _ -> do
+        resultTy <- freshTyVar
+        unify funTy' (TyArr argTy resultTy)
+        return resultTy
+  Let mname ty e1 e2 -> do
+    t1 <- inferType env e1
+    unify ty t1
+    case mname of
+      Just name -> inferType (Map.insert name ty env) e2
+      Nothing -> inferType env e2
+  LetRec name (param, paramTy) ty body expr -> do
+    let env' = Map.insert name ty env
+    let env'' = Map.insert param paramTy env'
+    bodyTy <- inferType env'' body
+    unify ty (TyArr paramTy bodyTy)
+    inferType env' expr
   If cond then_ else_ -> do
-    condTy <- inferExp env cond
+    condTy <- inferType env cond
     unify condTy TyBool
-    thenTy <- inferExp env then_
-    elseTy <- inferExp env else_
+    thenTy <- inferType env then_
+    elseTy <- inferType env else_
     unify thenTy elseTy
-    s <- gets tySubst
-    return $ apply s thenTy
+    normalize thenTy
   Pair e1 e2 -> do
-    ty1 <- inferExp env e1
-    ty2 <- inferExp env e2
-    return $ TyProd ty1 ty2
+    t1 <- inferType env e1
+    t2 <- inferType env e2
+    return $ TyProd t1 t2
   Fst e -> do
-    ty <- inferExp env e
-    ty1 <- newTyVar
-    ty2 <- newTyVar
-    unify ty (TyProd ty1 ty2)
-    s <- gets tySubst
-    return $ apply s ty1
+    ty <- inferType env e
+    a <- freshTyVar
+    b <- freshTyVar
+    unify ty (TyProd a b)
+    normalize a
   Snd e -> do
-    ty <- inferExp env e
-    ty1 <- newTyVar
-    ty2 <- newTyVar
-    unify ty (TyProd ty1 ty2)
-    s <- gets tySubst
-    return $ apply s ty2
+    ty <- inferType env e
+    a <- freshTyVar
+    b <- freshTyVar
+    unify ty (TyProd a b)
+    normalize b
 
--- トップレベルの文の型推論
-inferStmt :: (State TyState :> es, Error TypeError :> es) => TypeEnv -> Stmt -> Eff es (TypeEnv, Ty)
-inferStmt env = \case
-  LetStmt name annotatedTy valueExp -> do
-    valueTy <- inferExp env valueExp
-    s1 <- gets tySubst
-    unify (apply s1 valueTy) annotatedTy
-    s2 <- gets tySubst
-    let finalTy = apply s2 valueTy
-    return
-      ( case name of
-          Just n -> Map.insert n (generalize env finalTy) env
-          Nothing -> env,
-        finalTy
-      )
-  LetRecStmt name (param, paramTy) retTy body -> do
-    let funTy = TyArr paramTy retTy
-        funScheme = Forall [] funTy
-        paramScheme = Forall [] paramTy
-        env' = Map.insert name funScheme $ Map.insert param paramScheme env
-    bodyTy <- inferExp env' body
-    unify bodyTy retTy
-    s <- gets tySubst
-    let finalTy = apply s funTy
-        finalScheme = generalize env finalTy
-    return (Map.insert name finalScheme env, finalTy)
+-- 文の型検査
+typeCheckStmt :: TypeEnv -> Stmt -> Either TypeError (TypeEnv, Ty)
+typeCheckStmt env stmt = runTypeCheck $ case stmt of
+  LetStmt mname expectedTy e -> do
+    inferredTy <- inferType env e
+    unify expectedTy inferredTy
+    normalizedTy <- normalize expectedTy
+    case mname of
+      Just name -> return (Map.insert name normalizedTy env, normalizedTy)
+      Nothing -> return (env, normalizedTy)
+  LetRecStmt name (param, paramTy) expectedTy body -> do
+    let env' = Map.insert name expectedTy env
+    let env'' = Map.insert param paramTy env'
+    bodyTy <- inferType env'' body
+    unify expectedTy (TyArr paramTy bodyTy)
+    normalizedTy <- normalize expectedTy
+    return (Map.insert name normalizedTy env, normalizedTy)
 
--- 型チェックのエントリーポイント
-typecheck :: Stmt -> Either TypeError (Ty, Substitution)
-typecheck = typecheck' primitivesTypes
+-- 式の型検査（外部向けインターフェース）
+typeCheck :: TypeEnv -> Exp -> Either TypeError Ty
+typeCheck env expr = runTypeCheck $ do
+  ty <- inferType env expr
+  normalize ty
 
-typecheck' :: TypeEnv -> Stmt -> Either TypeError (Ty, Substitution)
-typecheck' env stmt = runPureEff . runErrorNoCallStack $ do
-  (ty, st) <- runState (TyState 0 Map.empty) $ do
-    (_, inferredTy) <- inferStmt env stmt
-    s <- gets tySubst
-    return $ apply s inferredTy
-  return (ty, tySubst st)
-
--- プリミティブ関数の型定義
-primitivesTypes :: TypeEnv
-primitivesTypes =
+initialTypeEnv :: TypeEnv
+initialTypeEnv =
   Map.fromList
-    [ ("add", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
-      ("sub", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
-      ("mul", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
-      ("div", Forall [] (TyArr TyInt (TyArr TyInt TyInt))),
-      ("neg", Forall [] (TyArr TyInt TyInt)),
-      ("eq", Forall [0] (TyArr (TyVar 0) (TyArr (TyVar 0) TyBool))),
-      ("lt", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
-      ("gt", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
-      ("le", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
-      ("ge", Forall [] (TyArr TyInt (TyArr TyInt TyBool))),
-      ("ne", Forall [0] (TyArr (TyVar 0) (TyArr (TyVar 0) TyBool)))
+    [ ("add", TyArr TyInt (TyArr TyInt TyInt)),
+      ("sub", TyArr TyInt (TyArr TyInt TyInt)),
+      ("mul", TyArr TyInt (TyArr TyInt TyInt)),
+      ("div", TyArr TyInt (TyArr TyInt TyInt)),
+      ("eq", TyArr TyInt (TyArr TyInt TyBool)),
+      ("lt", TyArr TyInt (TyArr TyInt TyBool)),
+      ("gt", TyArr TyInt (TyArr TyInt TyBool)),
+      ("le", TyArr TyInt (TyArr TyInt TyBool)),
+      ("ge", TyArr TyInt (TyArr TyInt TyBool)),
+      ("ne", TyArr TyInt (TyArr TyInt TyBool)),
+      ("neg", TyArr TyInt TyInt)
     ]
