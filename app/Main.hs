@@ -51,8 +51,6 @@ replSettings =
 -- REPLの実行
 runRepl :: IO ()
 runRepl = do
-  putStrLn "Welcome to EFL REPL!"
-  putStrLn "Type :help for available commands."
   ref <- newIORef initialReplState
   runInputT replSettings (runReaderT repl ref)
 
