@@ -13,13 +13,13 @@ import Data.IORef
 import Data.List
 import Parser
 import Syntax
-import System.Console.Haskeline
 import TypeChecker
+import System.Console.Haskeline
 
 -- REPLの状態
 data ReplState = ReplState
-  { typeEnv :: TypeEnv, -- 型環境
-    valueEnv :: GlobalEnv -- 値環境
+  { typeEnv :: TyEnv,    -- 型検査器の型環境
+    valueEnv :: GlobalEnv -- CAMachineの値環境
   }
 
 -- REPLモナド
@@ -29,8 +29,8 @@ type Repl a = (ReaderT (IORef ReplState) (InputT IO)) a
 initialReplState :: ReplState
 initialReplState =
   ReplState
-    { typeEnv = initialTypeEnv,
-      valueEnv = primitives
+    { typeEnv = initialEnv,  -- TypeChecker.hsで定義された初期型環境
+      valueEnv = primitives  -- CAMachine.hsで定義された初期値環境
     }
 
 -- REPLの設定
@@ -76,7 +76,7 @@ handleTypeQuery input = do
     Left err -> liftIO $ putStrLn $ "Parse error: " ++ err
     Right expr -> do
       ReplState {..} <- liftIO . readIORef =<< ask
-      case typeCheck typeEnv expr of
+      case checkExp typeEnv expr of
         Left err -> liftIO $ putStrLn $ "Type error: " ++ show err
         Right ty -> liftIO $ putStrLn $ "Type: " ++ show ty
 
@@ -95,7 +95,7 @@ handleInput input = do
 handleExp :: Exp -> Repl ()
 handleExp expr = do
   ReplState {..} <- liftIO . readIORef =<< ask
-  case typeCheck typeEnv expr of
+  case checkExp typeEnv expr of
     Left err -> liftIO $ putStrLn $ "Type error: " ++ show err
     Right ty -> do
       case eval valueEnv expr of
@@ -109,7 +109,7 @@ handleStmt :: Stmt -> Repl ()
 handleStmt stmt = do
   ref <- ask
   ReplState {..} <- liftIO $ readIORef ref
-  case typeCheckStmt typeEnv stmt of
+  case checkStmt typeEnv stmt of
     Left err -> liftIO $ putStrLn $ "Type error: " ++ show err
     Right (newTypeEnv, ty) -> do
       case evalStmt valueEnv stmt of
@@ -135,8 +135,8 @@ evalStmt env = \case
       Just name -> return ((name, value) : env, value)
       Nothing -> return (env, value)
   LetRecStmt name (param, paramTy) ty body -> do
-    let e = LetRec name (param, paramTy) ty body (Var name)
-    value <- eval env e
+    -- let recの評価を式の評価に変換して処理
+    value <- eval env (LetRec name (param, paramTy) ty body (Var name))
     return ((name, value) : env, value)
 
 main :: IO ()

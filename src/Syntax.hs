@@ -2,6 +2,7 @@
 module Syntax where
 
 import Data.ByteString.Char8 (ByteString)
+import Data.IntSet (IntSet)
 
 data Ty
   = TyUnit
@@ -10,6 +11,9 @@ data Ty
   | TyArr Ty Ty
   | TyProd Ty Ty
   | TyVar Int
+  deriving (Eq, Show)
+
+data TyScheme = TyScheme IntSet Ty
   deriving (Eq, Show)
 
 data Exp
@@ -30,3 +34,4 @@ data Exp
 data Stmt
   = LetStmt (Maybe ByteString) Ty Exp
   | LetRecStmt ByteString (ByteString, Ty) Ty Exp
+  deriving (Eq, Show)
