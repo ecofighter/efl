@@ -28,7 +28,6 @@ library
     build-depends:    base ^>=4.20.0.0,
                       bytestring,
                       containers,
-                      effectful,
                       mtl,
                       trifecta
     hs-source-dirs:   src
@@ -63,7 +62,6 @@ test-suite efl-test
         base ^>=4.20.0.0,
         bytestring,
         containers,
-        effectful,
         trifecta,
         hspec,
         QuickCheck,

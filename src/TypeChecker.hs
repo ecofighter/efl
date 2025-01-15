@@ -16,6 +16,7 @@ module TypeChecker
   )
 where
 
+import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State.Strict
 import Data.ByteString.Char8 (ByteString)
